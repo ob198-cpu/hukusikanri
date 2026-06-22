@@ -1902,6 +1902,7 @@ function init() {
   });
   const importedId = importUserFromUrlHash();
   renderDashboard();
+  renderMonitoringManagement();
   if (importedId) showDetail(importedId);
 }
 
