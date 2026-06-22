@@ -1030,6 +1030,10 @@ function monitoringBillingStatus(record) {
   return { text: "請求待ち", type: "danger" };
 }
 
+function monitoringAddOnTarget(record) {
+  return !!(record.meetingDone || record.addOn);
+}
+
 function agencyNoticeStatus(record) {
   if (record.noticeCreated && record.noticeSent) return { text: "完了", type: "done" };
   if (record.noticeCreated && !record.noticeSent) return { text: "送付待ち", type: "wait" };
@@ -1113,11 +1117,12 @@ function renderMonitoringManagement() {
 
   $("#monitoring-billing-body").innerHTML = billingRecords.length ? billingRecords.map(({ user, record }) => {
     const status = monitoringBillingStatus(record);
+    const addOnTarget = monitoringAddOnTarget(record);
     return `
       <tr class="monitoring-${status.type}">
         <td><strong>${escapeHtml(user.name || "(無名)")}</strong></td>
         <td>${escapeHtml(monthKeyLabel(billingSourceMonth))}</td>
-        <td class="monitoring-check-cell"><span class="monitoring-auto-label ${record.meetingDone ? "target" : ""}">${record.meetingDone ? "対象" : "-"}</span></td>
+        <td class="monitoring-check-cell"><span class="monitoring-auto-label ${addOnTarget ? "target" : ""}">${addOnTarget ? "対象" : "-"}</span></td>
         ${monitoringCheckboxHtml(user, billingSourceMonth, "billing", "billingDone", record.billingDone)}
         ${monitoringCheckboxHtml(user, billingSourceMonth, "billing", "billingSent", record.billingSent)}
         <td><span class="monitoring-status-pill ${status.type}">${escapeHtml(status.text)}</span></td>
@@ -1160,10 +1165,14 @@ function updateMonitoringField(userId, monthKey, kind, field, checked) {
     };
   } else {
     user.monitoringRecords = user.monitoringRecords || {};
-    user.monitoringRecords[monthKey] = {
+    const nextRecord = {
       ...defaultMonitoringRecord(monthKey),
       ...(user.monitoringRecords[monthKey] || {}),
       [field]: checked
+    };
+    if (field === "meetingDone") nextRecord.addOn = checked;
+    user.monitoringRecords[monthKey] = {
+      ...nextRecord
     };
   }
   addHistory(user, "モニタリング管理更新", `${monthKeyLabel(monthKey)} / ${MONITORING_FIELD_LABELS[field] || field}: ${checked ? "済" : "未"}`);
