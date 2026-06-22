@@ -1030,8 +1030,13 @@ function monitoringBillingStatus(record) {
   return { text: "請求待ち", type: "danger" };
 }
 
-function monitoringAddOnTarget(record) {
-  return !!(record.meetingDone || record.addOn);
+function monitoringAddOnTarget(user, record, billingMonthKey, workMonthKey) {
+  if (record.meetingDone || record.addOn) return true;
+  if (workMonthKey && workMonthKey !== billingMonthKey) {
+    const workRecord = monitoringRecord(user, workMonthKey);
+    if (workRecord.meetingDone || workRecord.addOn) return true;
+  }
+  return false;
 }
 
 function agencyNoticeStatus(record) {
@@ -1117,7 +1122,7 @@ function renderMonitoringManagement() {
 
   $("#monitoring-billing-body").innerHTML = billingRecords.length ? billingRecords.map(({ user, record }) => {
     const status = monitoringBillingStatus(record);
-    const addOnTarget = monitoringAddOnTarget(record);
+    const addOnTarget = monitoringAddOnTarget(user, record, billingSourceMonth, monthKey);
     return `
       <tr class="monitoring-${status.type}">
         <td><strong>${escapeHtml(user.name || "(無名)")}</strong></td>
