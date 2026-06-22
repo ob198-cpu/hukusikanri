@@ -73,6 +73,16 @@ const USER_STATUS_LABELS = {
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
 
+function isDashboardVisible(user) {
+  if (!user || typeof user !== "object") return false;
+  return (user.status || "active") !== "hidden";
+}
+
+function isAlertEligible(user) {
+  if (!user || typeof user !== "object") return false;
+  return (user.status || "active") === "active";
+}
+
 function loadAll() {
   const current = parseUserList(localStorage.getItem(STORAGE_KEY));
   if (current.length) {
