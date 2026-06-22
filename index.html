@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>受給者証・サービス更新期限管理システム</title>
-  <link rel="stylesheet" href="style.css?v=20260622-production-report">
+  <link rel="stylesheet" href="style.css?v=20260622-clean-core">
 </head>
 <body>
   <header class="app-header">
@@ -15,7 +15,6 @@
     <nav class="tabs" aria-label="主要メニュー">
       <button class="tab-btn active" data-view="dashboard">ダッシュボード</button>
       <button class="tab-btn" data-view="personal">個人シート</button>
-      <button class="tab-btn" data-view="production">生産活動</button>
       <button class="tab-btn" data-view="monitoring">モニタリング</button>
       <button class="tab-btn" data-view="backup">バックアップ</button>
     </nav>
@@ -64,131 +63,6 @@
         <button class="btn-primary" id="btn-new-from-personal">+ 新規入力</button>
       </div>
       <div id="personal-sheet-list" class="personal-sheet-list"></div>
-    </section>
-
-    <section id="view-production" class="view">
-      <div class="view-header">
-        <div>
-          <h2>生産活動報告</h2>
-          <p class="muted">毎日の作業内容、所要時間、進捗を記録します。</p>
-        </div>
-      </div>
-
-      <div class="production-mode-tabs" aria-label="生産活動メニュー">
-        <button type="button" class="production-mode-tab active" data-production-tab="form">フォーム</button>
-        <button type="button" class="production-mode-tab" data-production-tab="stats">集計</button>
-        <button type="button" class="production-mode-tab" data-production-tab="admin">管理画面</button>
-      </div>
-
-      <section class="production-panel active" data-production-panel="form">
-        <form id="production-form" class="production-form" autocomplete="off">
-          <input type="hidden" id="production-report-id">
-          <fieldset class="section">
-            <legend>生産活動報告フォーム</legend>
-            <div class="grid-2">
-              <label>日付 <span class="req">*</span><input type="date" id="production-date" required></label>
-              <label>氏名 <span class="req">*</span>
-                <input type="text" id="production-name" list="production-name-list" required>
-                <datalist id="production-name-list"></datalist>
-              </label>
-              <label>所要時間（トータル分数） <span class="req">*</span>
-                <select id="production-minutes" required></select>
-              </label>
-              <label class="span-2">進捗状況 <span class="req">*</span>
-                <textarea id="production-progress" rows="6" required></textarea>
-              </label>
-            </div>
-            <div class="production-field-block">
-              <div class="production-field-title">生産活動内容（複数回答可能） <span class="req">*</span></div>
-              <div id="production-activity-options" class="activity-checkbox-grid"></div>
-            </div>
-            <div class="form-footer production-form-footer">
-              <button type="button" class="btn-secondary" id="production-clear-form">入力をクリア</button>
-              <button type="submit" class="btn-primary" id="production-submit">報告を保存</button>
-            </div>
-          </fieldset>
-        </form>
-      </section>
-
-      <section class="production-panel" data-production-panel="stats">
-        <div class="production-toolbar-card">
-          <div class="production-period-row">
-            <button type="button" class="btn-secondary" id="production-prev-period">前へ</button>
-            <button type="button" class="btn-secondary" id="production-next-period">次へ</button>
-            <label>集計単位
-              <select id="production-period-mode">
-                <option value="week">週</option>
-                <option value="month">月</option>
-              </select>
-            </label>
-            <label>基準日
-              <input type="date" id="production-period-date">
-            </label>
-            <div class="production-period-label" id="production-period-label"></div>
-          </div>
-          <div class="production-kpi-row">
-            <div class="production-kpi-card"><span>報告件数</span><strong id="production-total-count">0件</strong></div>
-            <div class="production-kpi-card"><span>合計時間</span><strong id="production-total-hours">0時間</strong></div>
-            <div class="production-kpi-card"><span>職員数</span><strong id="production-staff-count">0名</strong></div>
-            <div class="production-kpi-card"><span>最多活動</span><strong id="production-top-activity">-</strong></div>
-          </div>
-        </div>
-
-        <div class="production-chart-grid">
-          <article class="production-chart-card">
-            <div class="production-chart-head">
-              <h3>全体グラフ</h3>
-              <span>活動別</span>
-            </div>
-            <div id="production-overall-chart" class="production-bar-chart"></div>
-          </article>
-          <article class="production-chart-card">
-            <div class="production-chart-head">
-              <h3>個別グラフ</h3>
-              <select id="production-staff-select" aria-label="職員選択"></select>
-            </div>
-            <div id="production-person-chart" class="production-bar-chart"></div>
-          </article>
-        </div>
-
-        <div class="production-table-grid">
-          <article class="production-chart-card">
-            <div class="production-chart-head">
-              <h3>活動別統計</h3>
-            </div>
-            <div id="production-activity-summary"></div>
-          </article>
-          <article class="production-chart-card">
-            <div class="production-chart-head">
-              <h3>職員別統計</h3>
-            </div>
-            <div id="production-staff-summary"></div>
-          </article>
-        </div>
-      </section>
-
-      <section class="production-panel" data-production-panel="admin">
-        <div class="production-admin-grid">
-          <article class="production-chart-card">
-            <div class="production-chart-head">
-              <h3>項目編集</h3>
-              <button type="button" class="btn-secondary" id="production-add-activity">項目追加</button>
-            </div>
-            <div id="production-activity-editor" class="production-activity-editor"></div>
-            <div class="actions production-admin-actions">
-              <button type="button" class="btn-secondary" id="production-reset-activities">初期項目に戻す</button>
-              <button type="button" class="btn-primary" id="production-save-activities">項目を保存</button>
-            </div>
-          </article>
-          <article class="production-chart-card">
-            <div class="production-chart-head">
-              <h3>報告一覧</h3>
-              <button type="button" class="btn-secondary" id="production-export-csv">CSVエクスポート</button>
-            </div>
-            <div id="production-report-list"></div>
-          </article>
-        </div>
-      </section>
     </section>
 
     <section id="view-monitoring" class="view">
@@ -521,6 +395,6 @@
     </div>
   </template>
 
-  <script src="app.js?v=20260622-billing-add-on-fallback"></script>
+  <script src="app.js?v=20260622-clean-core"></script>
 </body>
 </html>
