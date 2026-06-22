@@ -976,7 +976,7 @@ function monitoringRecordHasActivity(record) {
 }
 
 function monitoringWorkComplete(record) {
-  return record.recordDone && record.meetingDone && record.reportDone && record.mailed && record.returned && record.officeSent;
+  return record.recordDone && record.reportDone && record.mailed && record.returned && record.officeSent;
 }
 
 function monitoringWorkStatus(record, isTarget = true) {
@@ -988,7 +988,7 @@ function monitoringWorkStatus(record, isTarget = true) {
 }
 
 function monitoringBillingReady(record) {
-  return record.recordDone && record.meetingDone && record.reportDone;
+  return record.recordDone && record.reportDone;
 }
 
 function monitoringBillingStatus(record) {
