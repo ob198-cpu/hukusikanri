@@ -107,6 +107,19 @@
             <h3 id="monitoring-work-title">モニタリング実施管理</h3>
             <p class="muted">訪問・記録・報告書・郵送・署名返送・役所送付までを一括管理します。</p>
           </div>
+          <div class="monitoring-sub-toolbar compact-toolbar">
+            <label>表示
+              <select id="monitoring-work-filter">
+                <option value="target">対象者のみ</option>
+                <option value="incomplete">未完了のみ</option>
+                <option value="all">全員</option>
+              </select>
+            </label>
+            <label class="inline-check">
+              <input type="checkbox" id="monitoring-include-inactive">
+              停止・終了も表示
+            </label>
+          </div>
           <div class="monitoring-table-wrap">
             <table class="monitoring-table">
               <thead>
@@ -228,6 +241,7 @@
                 <option value="paused">停止</option>
                 <option value="ended">終了</option>
                 <option value="hidden">非表示</option>
+                <option value="deleted">削除済み</option>
               </select>
             </label>
           </div>
@@ -366,10 +380,23 @@
       </div>
       <div class="backup-box">
         <p>登録件数: <strong id="record-count">0</strong> 件</p>
+        <p>保存容量: <strong id="storage-usage">0KB</strong></p>
+        <p id="storage-warning" class="backup-warning" hidden></p>
         <p class="backup-note">この画面のデータはブラウザ内に保存されています。定期的にCSVエクスポートで控えを残してください。</p>
         <div class="actions">
+          <button class="btn-secondary" id="btn-save-dated-backup">日付付きバックアップ保存</button>
           <button class="btn-primary" id="btn-export">CSVエクスポート（Excel用）</button>
+          <label>取込方法
+            <select id="import-mode">
+              <option value="merge">追加・差分更新</option>
+              <option value="replace">全置換</option>
+            </select>
+          </label>
           <label class="btn-secondary file-label">CSVインポート<input type="file" id="import-file" accept=".csv,text/csv" hidden></label>
+        </div>
+        <div class="backup-list-wrap">
+          <h3>日付付きバックアップ</h3>
+          <div id="dated-backup-list" class="dated-backup-list"></div>
         </div>
       </div>
     </section>
@@ -395,6 +422,6 @@
     </div>
   </template>
 
-  <script src="app.js?v=20260623-monitoring-render-on-load"></script>
+  <script src="app.js?v=20260625-long-term-ops"></script>
 </body>
 </html>

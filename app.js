@@ -1,8 +1,10 @@
 const STORAGE_KEY = "welfare_users_static_v2";
 const LEGACY_STORAGE_KEYS = ["welfare_users_v1", "welfare_users_static_v1"];
+const DATED_BACKUP_PREFIX = "welfare_users_backup_";
 const WARN_DAYS = 60;
 const URGENT_DAYS = 30;
 const HISTORY_LIMIT = 10000;
+const STORAGE_WARNING_BYTES = 4 * 1024 * 1024;
 const SINGLE_SERVICE_TARGETS = ["training1", "training2"];
 const RENEWAL_STEPS = [
   { key: "document", formKey: "document", label: "書類作成", short: "書類作成" },
@@ -67,7 +69,8 @@ const USER_STATUS_LABELS = {
   active: "利用中",
   paused: "停止",
   ended: "終了",
-  hidden: "非表示"
+  hidden: "非表示",
+  deleted: "削除済み"
 };
 
 const $ = selector => document.querySelector(selector);
@@ -75,12 +78,23 @@ const $$ = selector => Array.from(document.querySelectorAll(selector));
 
 function isDashboardVisible(user) {
   if (!user || typeof user !== "object") return false;
-  return (user.status || "active") !== "hidden";
+  return (user.status || "active") === "active";
 }
 
 function isAlertEligible(user) {
   if (!user || typeof user !== "object") return false;
   return (user.status || "active") === "active";
+}
+
+function isDeletedUser(user) {
+  return (user?.status || "active") === "deleted";
+}
+
+function canShowInManagement(user, includeInactive = false) {
+  const status = user?.status || "active";
+  if (status === "deleted" || status === "hidden") return false;
+  if (status === "active") return true;
+  return includeInactive && (status === "paused" || status === "ended");
 }
 
 function loadAll() {
@@ -100,6 +114,7 @@ function loadAll() {
 
 function saveAll(users) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
+  warnIfStorageLarge();
 }
 
 function parseUserList(raw) {
@@ -193,7 +208,25 @@ function upsertUser(user) {
 }
 
 function deleteUser(id) {
-  saveAll(loadAll().filter(user => user.id !== id));
+  updateUserStatus(id, "deleted", "削除済みに変更");
+}
+
+function updateUserStatus(id, status, action = "利用状態変更") {
+  const users = loadAll();
+  const index = users.findIndex(user => user.id === id);
+  if (index < 0) return;
+  const user = users[index];
+  const previous = user.status || "active";
+  user.status = status;
+  if (status === "deleted") user.deletedAt = new Date().toISOString();
+  if (previous === "deleted" && status !== "deleted") user.restoredAt = new Date().toISOString();
+  addHistory(user, action, `${USER_STATUS_LABELS[previous] || previous} → ${USER_STATUS_LABELS[status] || status}`);
+  users[index] = normalizeUser(user);
+  saveAll(users);
+}
+
+function restoreUser(id) {
+  updateUserStatus(id, "active", "削除済みから復元");
 }
 
 function normalizeUser(user) {
@@ -1024,8 +1057,17 @@ function agencyNoticeStatus(record) {
 }
 
 function monitoringTargetUsers(monthKey) {
+  const filter = $("#monitoring-work-filter")?.value || "target";
+  const includeInactive = !!$("#monitoring-include-inactive")?.checked;
   return loadAll()
-    .filter(user => isDashboardVisible(user));
+    .filter(user => canShowInManagement(user, includeInactive))
+    .filter(user => {
+      const record = monitoringRecord(user, monthKey);
+      const isTarget = isMonitoringDueInMonth(user, monthKey) || monitoringRecordHasActivity(record);
+      if (filter === "all") return true;
+      if (filter === "incomplete") return isTarget && !monitoringWorkComplete(record);
+      return isTarget;
+    });
 }
 
 function monitoringCheckboxHtml(user, monthKey, kind, field, checked, invert = false) {
@@ -1409,6 +1451,7 @@ function renderPersonalSheets() {
       <div class="actions">
         <button class="btn-primary" data-confirm="${user.id}">個人シートを見る</button>
         <button class="btn-secondary" data-edit="${user.id}">編集</button>
+        ${userManagementButtons(user)}
       </div>
     `;
     card.querySelector("[data-confirm]").addEventListener("click", () => showDetail(user.id));
@@ -1416,8 +1459,43 @@ function renderPersonalSheets() {
       fillForm(user);
       showView("input");
     });
+    bindUserManagementButtons(card);
     container.appendChild(card);
   });
+}
+
+function userManagementButtons(user) {
+  const id = escapeHtml(user.id);
+  const status = user.status || "active";
+  if (status === "deleted") {
+    return `<button class="btn-secondary" data-user-action="restore" data-user-id="${id}">復元</button>`;
+  }
+  const hideButton = status === "hidden"
+    ? `<button class="btn-secondary" data-user-action="restore" data-user-id="${id}">再表示</button>`
+    : `<button class="btn-secondary" data-user-action="hide" data-user-id="${id}">非表示</button>`;
+  return `${hideButton}<button class="btn-danger" data-user-action="delete" data-user-id="${id}">削除済みにする</button>`;
+}
+
+function bindUserManagementButtons(root = document) {
+  root.querySelectorAll("[data-user-action]").forEach(button => {
+    button.addEventListener("click", () => handleUserManagementAction(button.dataset.userId, button.dataset.userAction));
+  });
+}
+
+function handleUserManagementAction(id, action) {
+  const user = getUser(id);
+  if (!user) return;
+  if (action === "delete") {
+    if (!confirm(`${user.name || "この利用者"}を削除済みにします。後から復元できます。`)) return;
+    deleteUser(id);
+  } else if (action === "hide") {
+    updateUserStatus(id, "hidden", "非表示に変更");
+  } else if (action === "restore") {
+    restoreUser(id);
+  }
+  renderDashboard();
+  renderPersonalSheets();
+  renderMonitoringManagement();
 }
 
 function showDetail(id) {
@@ -1432,6 +1510,7 @@ function showDetail(id) {
   $$("#detail-content [data-deadline-complete]").forEach(button => {
     button.addEventListener("click", () => toggleDeadline(id, button.dataset.deadlineComplete, button.dataset.deadlineDate));
   });
+  bindUserManagementButtons($("#detail-content"));
   showView("detail");
 }
 
@@ -1450,6 +1529,13 @@ function detailHtml(user) {
   const renewalActive = isRenewalMonthActive(user);
   const alertLabel = renewalAlertLabel(user);
   return `
+    <article class="detail-card wide-detail user-management-card">
+      <div>
+        <h3>利用者管理</h3>
+        <p>非表示・削除済み・復元をここから行えます。削除済みにしてもデータは残ります。</p>
+      </div>
+      <div class="actions">${userManagementButtons(user)}</div>
+    </article>
     <div class="detail-top-grid wide-detail">
       <article class="detail-card task-priority-card ${renewalActive ? "renewal-urgent" : ""}">
         <div class="priority-heading">
@@ -1675,7 +1761,114 @@ function toggleRenewalStep(userId, key) {
 }
 
 function renderBackup() {
-  $("#record-count").textContent = loadAll().length;
+  const users = loadAll();
+  const usage = storageUsageBytes();
+  $("#record-count").textContent = users.length;
+  $("#storage-usage").textContent = formatBytes(usage);
+  const warning = $("#storage-warning");
+  if (usage >= STORAGE_WARNING_BYTES) {
+    warning.hidden = false;
+    warning.textContent = "保存容量が大きくなっています。CSVエクスポートと日付付きバックアップを必ず残してください。";
+  } else {
+    warning.hidden = true;
+    warning.textContent = "";
+  }
+  renderDatedBackups();
+}
+
+function storageUsageBytes() {
+  try {
+    return Object.keys(localStorage).reduce((total, key) => {
+      const value = localStorage.getItem(key) || "";
+      return total + new Blob([key, value]).size;
+    }, 0);
+  } catch {
+    return 0;
+  }
+}
+
+function formatBytes(bytes) {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)}MB`;
+  return `${Math.ceil(bytes / 1024)}KB`;
+}
+
+function warnIfStorageLarge() {
+  if (typeof sessionStorage === "undefined") return;
+  if (sessionStorage.getItem("storage-size-warning-shown")) return;
+  if (storageUsageBytes() < STORAGE_WARNING_BYTES) return;
+  sessionStorage.setItem("storage-size-warning-shown", "1");
+  alert("保存容量が大きくなっています。バックアップ画面からCSVエクスポートと日付付きバックアップを残してください。");
+}
+
+function datedBackupKey() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `${DATED_BACKUP_PREFIX}${stamp}`;
+}
+
+function listDatedBackups() {
+  return Object.keys(localStorage)
+    .filter(key => key.startsWith(DATED_BACKUP_PREFIX))
+    .sort()
+    .reverse()
+    .map(key => {
+      const raw = localStorage.getItem(key) || "[]";
+      const users = parseUserList(raw);
+      return { key, raw, count: users.length, createdAt: key.replace(DATED_BACKUP_PREFIX, "").replace("T", " ").replace("Z", "") };
+    });
+}
+
+function saveDatedBackup() {
+  localStorage.setItem(datedBackupKey(), JSON.stringify(loadAll()));
+  renderBackup();
+  alert("日付付きバックアップを保存しました。");
+}
+
+function restoreDatedBackup(key) {
+  const users = parseUserList(localStorage.getItem(key));
+  if (!users.length) {
+    alert("このバックアップから利用者データを読み取れませんでした。");
+    return;
+  }
+  if (!confirm(`${users.length}件のバックアップで現在のデータを置き換えます。よろしいですか？`)) return;
+  saveAll(users);
+  renderDashboard();
+  renderMonitoringManagement();
+  renderBackup();
+  alert("バックアップから復元しました。");
+}
+
+function deleteDatedBackup(key) {
+  if (!confirm("この日付付きバックアップを削除します。現在の利用者データは削除されません。")) return;
+  localStorage.removeItem(key);
+  renderBackup();
+}
+
+function renderDatedBackups() {
+  const container = $("#dated-backup-list");
+  if (!container) return;
+  const backups = listDatedBackups();
+  if (!backups.length) {
+    container.innerHTML = '<div class="empty-state">日付付きバックアップはまだありません。</div>';
+    return;
+  }
+  container.innerHTML = backups.map(item => `
+    <div class="dated-backup-item">
+      <div>
+        <strong>${escapeHtml(item.createdAt)}</strong>
+        <span>${item.count}件 / ${formatBytes(new Blob([item.raw]).size)}</span>
+      </div>
+      <div class="actions">
+        <button class="btn-secondary" data-backup-restore="${escapeHtml(item.key)}">復元</button>
+        <button class="btn-danger" data-backup-delete="${escapeHtml(item.key)}">削除</button>
+      </div>
+    </div>
+  `).join("");
+  container.querySelectorAll("[data-backup-restore]").forEach(button => {
+    button.addEventListener("click", () => restoreDatedBackup(button.dataset.backupRestore));
+  });
+  container.querySelectorAll("[data-backup-delete]").forEach(button => {
+    button.addEventListener("click", () => deleteDatedBackup(button.dataset.backupDelete));
+  });
 }
 
 function exportCsv() {
@@ -1732,17 +1925,60 @@ function importCsv(file) {
       const headers = rows[0];
       const backupIndex = headers.indexOf("バックアップデータ");
       if (backupIndex < 0) throw new Error("バックアップデータ列がありません。");
-      const data = rows.slice(1).filter(row => row.some(cell => cell.trim())).map(row => JSON.parse(row[backupIndex]));
-      if (!confirm(`${data.length}件を取り込みます。現在のデータは置き換わります。よろしいですか？`)) return;
-      saveAll(data);
+      const data = rows.slice(1).filter(row => row.some(cell => cell.trim())).map(row => normalizeUser(JSON.parse(row[backupIndex])));
+      const mode = $("#import-mode")?.value || "merge";
+      if (mode === "replace") {
+        if (!confirm(`${data.length}件で現在のデータを全て置き換えます。よろしいですか？`)) return;
+        saveAll(data);
+      } else {
+        const merged = mergeImportedUsers(loadAll(), data);
+        if (!confirm(`${data.length}件を追加・差分更新します。現在${merged.updated}件更新、${merged.added}件追加の予定です。よろしいですか？`)) return;
+        saveAll(merged.users);
+      }
       renderDashboard();
       renderBackup();
+      renderPersonalSheets();
+      renderMonitoringManagement();
       alert("取り込みました。");
     } catch (error) {
       alert(`取り込みに失敗しました: ${error.message}`);
     }
   };
   reader.readAsText(file);
+}
+
+function userMergeKey(user) {
+  if (user.id) return `id:${user.id}`;
+  if (user.recipientNo) return `recipient:${user.recipientNo}`;
+  if (user.name) return `name:${user.name}`;
+  return "";
+}
+
+function mergeImportedUsers(currentUsers, importedUsers) {
+  const users = currentUsers.map(user => normalizeUser({ ...user }));
+  let added = 0;
+  let updated = 0;
+  importedUsers.forEach(imported => {
+    const key = userMergeKey(imported);
+    const index = users.findIndex(user => userMergeKey(user) === key || (
+      imported.recipientNo && user.recipientNo === imported.recipientNo
+    ) || (
+      imported.name && user.name === imported.name
+    ));
+    if (index >= 0) {
+      users[index] = normalizeUser({
+        ...users[index],
+        ...imported,
+        id: users[index].id || imported.id || uid(),
+        history: [...(users[index].history || []), ...(imported.history || [])].slice(-HISTORY_LIMIT)
+      });
+      updated++;
+    } else {
+      users.push(normalizeUser({ ...imported, id: imported.id || uid() }));
+      added++;
+    }
+  });
+  return { users, added, updated };
 }
 
 function csvCell(value) {
@@ -1833,6 +2069,10 @@ function init() {
     setMonthControl("billing-source", addMonthsToKey(current, -1));
     renderMonitoringManagement();
   }));
+  ["monitoring-work-filter", "monitoring-include-inactive"].forEach(id => {
+    const control = $(`#${id}`);
+    if (control) control.addEventListener("change", renderMonitoringManagement);
+  });
   $("#billing-prev-target-month").addEventListener("click", () => {
     setMonthControl("billing-source", addMonthsToKey(syncMonthControl("billing-source"), -1));
     renderMonitoringManagement();
@@ -1889,11 +2129,12 @@ function init() {
   $("#btn-delete").addEventListener("click", () => {
     const id = $("#user-id").value;
     if (!id) return;
-    if (confirm("この利用者を削除します。よろしいですか？")) {
+    if (confirm("この利用者を削除済みにします。後から復元できます。よろしいですか？")) {
       deleteUser(id);
       showView("dashboard");
     }
   });
+  $("#btn-save-dated-backup").addEventListener("click", saveDatedBackup);
   $("#btn-export").addEventListener("click", exportCsv);
   $("#import-file").addEventListener("change", event => {
     const file = event.target.files && event.target.files[0];
