@@ -1473,7 +1473,7 @@ function userManagementButtons(user) {
   const hideButton = status === "hidden"
     ? `<button class="btn-secondary" data-user-action="restore" data-user-id="${id}">再表示</button>`
     : `<button class="btn-secondary" data-user-action="hide" data-user-id="${id}">非表示</button>`;
-  return `${hideButton}<button class="btn-danger" data-user-action="delete" data-user-id="${id}">削除済みにする</button>`;
+  return `${hideButton}<button class="btn-danger" data-user-action="delete" data-user-id="${id}">削除</button>`;
 }
 
 function bindUserManagementButtons(root = document) {
