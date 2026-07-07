@@ -1019,6 +1019,38 @@ fieldset.section,
   background: var(--soft);
 }
 
+.list-toolbar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 220px;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.list-toolbar label {
+  display: grid;
+  gap: 6px;
+  color: var(--primary-dark);
+  font-weight: 800;
+}
+
+.list-toolbar input,
+.list-toolbar select {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+}
+
 .personal-sheet-list {
   display: grid;
   gap: 14px;
@@ -1692,6 +1724,49 @@ textarea:focus {
   font-weight: 700;
 }
 
+.backup-note.strong-note {
+  max-width: none;
+  padding: 10px 12px;
+  border: 1px solid #c8ddf5;
+  border-radius: 8px;
+  color: var(--primary-dark);
+  background: #eef6ff;
+  font-weight: 900;
+}
+
+.sheet-sync-box {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--primary);
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.sheet-sync-box h3 {
+  margin: 0;
+  color: var(--primary-dark);
+}
+
+.sheet-sync-status {
+  margin: 0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-weight: 900;
+}
+
+.sheet-sync-status.ok {
+  color: #17613c;
+  background: #eaf8ef;
+}
+
+.sheet-sync-status.warn {
+  color: #8f1717;
+  background: #fff1f1;
+}
+
 .backup-warning {
   margin: 10px 0;
   padding: 10px 12px;
@@ -1700,6 +1775,57 @@ textarea:focus {
   color: #9b1c1c;
   background: #fff1f1;
   font-weight: 800;
+}
+
+.import-preview {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.import-preview h3 {
+  margin: 0 0 12px;
+  color: var(--primary-dark);
+}
+
+.import-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, auto 1fr);
+  gap: 8px 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.import-preview-grid span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.import-preview-table-wrap {
+  overflow-x: auto;
+  margin-bottom: 12px;
+}
+
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+.mini-table th,
+.mini-table td {
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.mini-table th {
+  color: var(--primary-dark);
+  background: #eaf3ff;
+  font-weight: 900;
 }
 
 .backup-list-wrap {

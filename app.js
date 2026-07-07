@@ -1,11 +1,18 @@
 const STORAGE_KEY = "welfare_users_static_v2";
 const LEGACY_STORAGE_KEYS = ["welfare_users_v1", "welfare_users_static_v1"];
 const DATED_BACKUP_PREFIX = "welfare_users_backup_";
+const GOOGLE_SHEET_ENDPOINT_KEY = "welfare_google_sheet_endpoint_v1";
+const GOOGLE_SHEET_PENDING_KEY = "welfare_google_sheet_pending_v1";
+const GOOGLE_SHEET_LAST_SYNC_KEY = "welfare_google_sheet_last_sync_v1";
+const DEFAULT_GOOGLE_SHEET_ENDPOINT = "https://script.google.com/macros/s/AKfycbw4F3TJMF481WLZTN6RMgeRSSap0n-qT_2Pcn5TGoXmL46MtE4Suh_0Onz1LPgfSMjxTw/exec";
+const TARGET_SPREADSHEET_ID = "1DNvKBKSmnKg7eU0T7T_46Qz5ib1phGFzG8yxdPQCUyw";
 const WARN_DAYS = 60;
 const URGENT_DAYS = 30;
 const HISTORY_LIMIT = 10000;
 const STORAGE_WARNING_BYTES = 4 * 1024 * 1024;
+const BACKUP_REMINDER_DAYS = 7;
 const SINGLE_SERVICE_TARGETS = ["training1", "training2"];
+let pendingImport = null;
 const RENEWAL_STEPS = [
   { key: "document", formKey: "document", label: "書類作成", short: "書類作成" },
   { key: "send", formKey: "send", label: "役所送付", short: "役所送付", legacyKey: "apply" },
@@ -114,7 +121,96 @@ function loadAll() {
 
 function saveAll(users) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
+  markSheetSyncPending(users);
+  scheduleSheetSync();
   warnIfStorageLarge();
+}
+
+function sheetEndpoint() {
+  return localStorage.getItem(GOOGLE_SHEET_ENDPOINT_KEY) || DEFAULT_GOOGLE_SHEET_ENDPOINT;
+}
+
+function setSheetEndpoint(url) {
+  localStorage.setItem(GOOGLE_SHEET_ENDPOINT_KEY, url.trim());
+}
+
+function markSheetSyncPending(users) {
+  const payload = {
+    spreadsheetId: TARGET_SPREADSHEET_ID,
+    users: users.map(user => normalizeUser({ ...user })),
+    savedAt: new Date().toISOString()
+  };
+  localStorage.setItem(GOOGLE_SHEET_PENDING_KEY, JSON.stringify(payload));
+}
+
+function pendingSheetSync() {
+  try {
+    return JSON.parse(localStorage.getItem(GOOGLE_SHEET_PENDING_KEY) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function scheduleSheetSync() {
+  if (!sheetEndpoint()) return;
+  window.clearTimeout(scheduleSheetSync.timer);
+  scheduleSheetSync.timer = window.setTimeout(() => syncSheetNow(false), 600);
+}
+
+async function syncSheetNow(showAlert = true) {
+  const endpoint = sheetEndpoint();
+  if (!endpoint) {
+    if (showAlert) alert("Apps Script WebアプリURLを設定してください。");
+    renderSheetSyncStatus();
+    return false;
+  }
+  const payload = pendingSheetSync() || {
+    spreadsheetId: TARGET_SPREADSHEET_ID,
+    users: loadAll(),
+    savedAt: new Date().toISOString()
+  };
+  try {
+    await fetch(endpoint, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "saveUsers", ...payload })
+    });
+    localStorage.removeItem(GOOGLE_SHEET_PENDING_KEY);
+    localStorage.setItem(GOOGLE_SHEET_LAST_SYNC_KEY, new Date().toISOString());
+    renderSheetSyncStatus("送信要求済み: Googleシート側で反映を確認してください。");
+    if (showAlert) alert("Googleスプレッドシートへ送信要求を出しました。シート側で反映を確認してください。");
+    return true;
+  } catch (error) {
+    renderSheetSyncStatus(`送信失敗: ${error.message || error}`);
+    if (showAlert) alert(`Googleスプレッドシートへの送信に失敗しました: ${error.message || error}`);
+    return false;
+  }
+}
+
+function renderSheetSyncStatus(message = "") {
+  const endpointInput = $("#sheet-endpoint");
+  if (endpointInput) endpointInput.value = sheetEndpoint();
+  const status = $("#sheet-sync-status");
+  if (!status) return;
+  const pending = pendingSheetSync();
+  const last = localStorage.getItem(GOOGLE_SHEET_LAST_SYNC_KEY);
+  if (message) {
+    status.textContent = message;
+    status.className = "sheet-sync-status warn";
+  } else if (!sheetEndpoint()) {
+    status.textContent = "未設定: Apps Script WebアプリURLを設定すると、保存時にシートへ送信します。";
+    status.className = "sheet-sync-status warn";
+  } else if (pending) {
+    status.textContent = `未送信データあり: ${formatDateTime(pending.savedAt)} 保存分`;
+    status.className = "sheet-sync-status warn";
+  } else if (last) {
+    status.textContent = `送信要求済み: ${formatDateTime(last)} / Googleシート側で反映確認`;
+    status.className = "sheet-sync-status ok";
+  } else {
+    status.textContent = "設定済み: 次回保存時にシートへ送信します。";
+    status.className = "sheet-sync-status ok";
+  }
 }
 
 function parseUserList(raw) {
@@ -750,6 +846,41 @@ function collectForm() {
   return normalizeUser(user);
 }
 
+function validateCollectedUser(user) {
+  const errors = [];
+  const warnings = [];
+  if (!user.name) errors.push("氏名は必須です。");
+  validateDateRange("計画相談支援情報", user.planStart, user.planEnd, errors);
+  ["training1", "training2", "care1", "care2"].forEach(key => {
+    (user[key] || []).forEach((row, index) => {
+      validateDateRange(`${SERVICE_LABELS[key]} ${index + 1}`, row.start, row.end, errors);
+    });
+  });
+
+  if ((user.status || "active") === "active") {
+    if (!user.planEnd) warnings.push("計画相談支援情報の有効期間終了が未入力です。");
+    const hasServiceEnd = ["training1", "training2", "care1", "care2"].some(key =>
+      (user[key] || []).some(row => row.end)
+    );
+    if (!hasServiceEnd) warnings.push("各サービスの終了日が1件も入力されていません。期限アラートに出ません。");
+    if (!user.monitoringCycle) warnings.push("モニタリング月が未設定です。モニタリング対象月に表示されません。");
+  }
+
+  return { errors, warnings };
+}
+
+function validateDateRange(label, start, end, errors) {
+  if (!start || !end) return;
+  if (new Date(start).getTime() > new Date(end).getTime()) {
+    errors.push(`${label}の開始日が終了日より後になっています。`);
+  }
+}
+
+function confirmUserWarnings(warnings) {
+  if (!warnings.length) return true;
+  return confirm(`保存できますが、運用上の警告があります。\n\n- ${warnings.join("\n- ")}\n\nこのまま保存しますか？`);
+}
+
 function buildAlerts(users) {
   const recipient = [];
   const monitoring = [];
@@ -1221,7 +1352,7 @@ function handleMonitoringCheckboxChange(event) {
 function renderDashboard() {
   const users = loadAll().filter(user => isDashboardVisible(user));
   const monitoringUsers = users.filter(user => isMonitoringDueInMonth(user, currentMonthKey()) || monitoringRecordHasActivity(monitoringRecord(user, currentMonthKey())));
-  renderMonitoringCards(users);
+  renderMonitoringCards(monitoringUsers);
   renderRenewalCards(users);
   $("#count-monitoring").textContent = monitoringUsers.length;
   $("#count-renewal").textContent = users.length;
@@ -1419,14 +1550,18 @@ function renderAlertList(containerId, alerts) {
 }
 
 function renderPersonalSheets() {
-  const users = loadAll().sort((a, b) => (a.name || "").localeCompare(b.name || "", "ja"));
+  const query = ($("#personal-search")?.value || "").trim().toLowerCase();
+  const statusFilter = $("#personal-status-filter")?.value || "normal";
+  const users = loadAll()
+    .filter(user => personalUserMatches(user, query, statusFilter))
+    .sort((a, b) => (a.name || "").localeCompare(b.name || "", "ja"));
   const container = $("#personal-sheet-list");
   container.innerHTML = "";
 
   if (!users.length) {
     container.innerHTML = `
       <div class="empty-state">
-        登録済みの利用者はいません。入力シートから新規登録してください。
+        条件に合う利用者はいません。検索条件や表示状態を確認してください。
       </div>
     `;
     return;
@@ -1462,6 +1597,22 @@ function renderPersonalSheets() {
     bindUserManagementButtons(card);
     container.appendChild(card);
   });
+}
+
+function personalUserMatches(user, query, statusFilter) {
+  const status = user.status || "active";
+  if (statusFilter === "normal" && (status === "hidden" || status === "deleted")) return false;
+  if (statusFilter !== "normal" && statusFilter !== "all" && status !== statusFilter) return false;
+  if (!query) return true;
+  const haystack = [
+    user.name,
+    user.kana,
+    user.recipientNo,
+    user.wardName,
+    user.municipalCode,
+    USER_STATUS_LABELS[status]
+  ].join(" ").toLowerCase();
+  return haystack.includes(query);
 }
 
 function userManagementButtons(user) {
@@ -1773,7 +1924,36 @@ function renderBackup() {
     warning.hidden = true;
     warning.textContent = "";
   }
+  renderBackupReminder();
+  renderSheetSyncStatus();
   renderDatedBackups();
+}
+
+function renderBackupReminder() {
+  const box = $("#backup-reminder");
+  if (!box) return;
+  const backups = listDatedBackups();
+  if (!backups.length) {
+    box.hidden = false;
+    box.textContent = "日付付きバックアップがまだありません。運用開始前に必ず保存してください。";
+    return;
+  }
+  const latestDate = backupKeyToDate(backups[0].key);
+  const days = latestDate ? Math.floor((Date.now() - latestDate.getTime()) / 86400000) : 999;
+  if (days >= BACKUP_REMINDER_DAYS) {
+    box.hidden = false;
+    box.textContent = `最後の日付付きバックアップから${days}日経過しています。CSV出力と日付付きバックアップを残してください。`;
+  } else {
+    box.hidden = true;
+    box.textContent = "";
+  }
+}
+
+function backupKeyToDate(key) {
+  const value = key.replace(DATED_BACKUP_PREFIX, "");
+  const normalized = value.replace(/^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/, "$1T$2:$3:$4").replace(/-(\d{3})Z$/, ".$1Z");
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function storageUsageBytes() {
@@ -1916,6 +2096,32 @@ function exportCsv() {
   URL.revokeObjectURL(url);
 }
 
+function exportHistoryCsv() {
+  const headers = ["氏名", "状態", "日時", "操作", "内容"];
+  const rows = loadAll().flatMap(user => {
+    const history = Array.isArray(user.history) ? user.history : [];
+    return history.map(item => [
+      user.name || "",
+      USER_STATUS_LABELS[user.status || "active"] || "",
+      item.at || "",
+      item.action || "",
+      item.detail || ""
+    ]);
+  });
+  if (!rows.length) {
+    alert("出力できる履歴がありません。");
+    return;
+  }
+  const csv = [headers, ...rows].map(row => row.map(csvCell).join(",")).join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `welfare_history_${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function importCsv(file) {
   const reader = new FileReader();
   reader.onload = event => {
@@ -1927,24 +2133,93 @@ function importCsv(file) {
       if (backupIndex < 0) throw new Error("バックアップデータ列がありません。");
       const data = rows.slice(1).filter(row => row.some(cell => cell.trim())).map(row => normalizeUser(JSON.parse(row[backupIndex])));
       const mode = $("#import-mode")?.value || "merge";
-      if (mode === "replace") {
-        if (!confirm(`${data.length}件で現在のデータを全て置き換えます。よろしいですか？`)) return;
-        saveAll(data);
-      } else {
-        const merged = mergeImportedUsers(loadAll(), data);
-        if (!confirm(`${data.length}件を追加・差分更新します。現在${merged.updated}件更新、${merged.added}件追加の予定です。よろしいですか？`)) return;
-        saveAll(merged.users);
-      }
-      renderDashboard();
-      renderBackup();
-      renderPersonalSheets();
-      renderMonitoringManagement();
-      alert("取り込みました。");
+      pendingImport = buildImportPreview(data, mode);
+      renderImportPreview(pendingImport);
     } catch (error) {
       alert(`取り込みに失敗しました: ${error.message}`);
     }
   };
   reader.readAsText(file);
+}
+
+function buildImportPreview(data, mode) {
+  const current = loadAll();
+  const merged = mode === "replace" ? null : mergeImportedUsers(current, data);
+  const duplicateNames = duplicateValues(data.map(user => user.name).filter(Boolean));
+  const missingRecipientNo = data.filter(user => !user.recipientNo).length;
+  return { mode, data, merged, currentCount: current.length, duplicateNames, missingRecipientNo };
+}
+
+function duplicateValues(values) {
+  const counts = new Map();
+  values.forEach(value => counts.set(value, (counts.get(value) || 0) + 1));
+  return [...counts.entries()].filter(([, count]) => count > 1).map(([value]) => value);
+}
+
+function renderImportPreview(preview) {
+  const container = $("#import-preview");
+  if (!container) return;
+  const warnings = [];
+  if (preview.mode === "replace") warnings.push("全置換です。現在のデータは取り込むCSVの内容に置き換わります。");
+  if (preview.duplicateNames.length) warnings.push(`同姓同名・同名候補: ${preview.duplicateNames.join("、")}`);
+  if (preview.missingRecipientNo) warnings.push(`受給者証番号なし: ${preview.missingRecipientNo}件。氏名一致で更新される可能性があります。`);
+  container.hidden = false;
+  container.innerHTML = `
+    <h3>CSV取込確認</h3>
+    <div class="import-preview-grid">
+      <span>方式</span><strong>${preview.mode === "replace" ? "全置換" : "追加・差分更新"}</strong>
+      <span>取込件数</span><strong>${preview.data.length}件</strong>
+      <span>現在件数</span><strong>${preview.currentCount}件</strong>
+      <span>予定</span><strong>${preview.mode === "replace" ? `${preview.data.length}件で置換` : `${preview.merged.updated}件更新 / ${preview.merged.added}件追加`}</strong>
+    </div>
+    ${warnings.length ? `<div class="backup-warning import-warning">${warnings.map(escapeHtml).join("<br>")}</div>` : ""}
+    <div class="import-preview-table-wrap">
+      <table class="mini-table">
+        <thead><tr><th>氏名</th><th>受給者証番号</th><th>状態</th><th>計画相談期限</th></tr></thead>
+        <tbody>
+          ${preview.data.slice(0, 20).map(user => `
+            <tr>
+              <td>${escapeHtml(user.name || "-")}</td>
+              <td>${escapeHtml(user.recipientNo || "-")}</td>
+              <td>${escapeHtml(USER_STATUS_LABELS[user.status || "active"] || "-")}</td>
+              <td>${formatDate(user.planEnd)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+      ${preview.data.length > 20 ? `<p class="muted">先頭20件のみ表示しています。</p>` : ""}
+    </div>
+    <div class="actions">
+      <button type="button" class="btn-primary" id="btn-apply-import">この内容で取り込む</button>
+      <button type="button" class="btn-secondary" id="btn-cancel-import">取り消す</button>
+    </div>
+  `;
+  $("#btn-apply-import").addEventListener("click", applyPendingImport);
+  $("#btn-cancel-import").addEventListener("click", clearImportPreview);
+}
+
+function applyPendingImport() {
+  if (!pendingImport) return;
+  if (pendingImport.mode === "replace") {
+    if (!confirm(`${pendingImport.data.length}件で現在のデータを全て置き換えます。よろしいですか？`)) return;
+    saveAll(pendingImport.data);
+  } else {
+    saveAll(pendingImport.merged.users);
+  }
+  clearImportPreview();
+  renderDashboard();
+  renderBackup();
+  renderPersonalSheets();
+  renderMonitoringManagement();
+  alert("取り込みました。");
+}
+
+function clearImportPreview() {
+  pendingImport = null;
+  const container = $("#import-preview");
+  if (!container) return;
+  container.hidden = true;
+  container.innerHTML = "";
 }
 
 function userMergeKey(user) {
@@ -2037,6 +2312,11 @@ function init() {
     clearForm();
     showView("input");
   });
+  ["personal-search", "personal-status-filter"].forEach(id => {
+    const control = $(`#${id}`);
+    if (control) control.addEventListener("input", renderPersonalSheets);
+    if (control) control.addEventListener("change", renderPersonalSheets);
+  });
   $("#btn-save-top").addEventListener("click", () => $("#user-form").requestSubmit());
   $("#btn-cancel").addEventListener("click", () => showView("dashboard"));
   $("#btn-cancel-bottom").addEventListener("click", () => showView("dashboard"));
@@ -2112,11 +2392,15 @@ function init() {
     event.preventDefault();
     syncEraInputsToNative($("#user-form"));
     const user = collectForm();
-    if (!user.name) {
-      alert("氏名は必須です。");
+    const validation = validateCollectedUser(user);
+    if (validation.errors.length) {
+      alert(validation.errors.join("\n"));
       return;
     }
-  const wasNew = !getUser(user.id);
+    if (!confirmUserWarnings(validation.warnings)) {
+      return;
+    }
+    const wasNew = !getUser(user.id);
     const previous = getUser(user.id);
     const previousStatus = previous?.status || "active";
     addHistory(user, wasNew ? "個人シート新規作成" : "個人シート更新", `計画相談期限: ${formatDate(user.planEnd)}`);
@@ -2136,6 +2420,17 @@ function init() {
   });
   $("#btn-save-dated-backup").addEventListener("click", saveDatedBackup);
   $("#btn-export").addEventListener("click", exportCsv);
+  $("#btn-export-history").addEventListener("click", exportHistoryCsv);
+  $("#btn-save-sheet-endpoint").addEventListener("click", () => {
+    setSheetEndpoint($("#sheet-endpoint").value);
+    renderSheetSyncStatus();
+    alert("Googleスプレッドシート保存先URLを保存しました。");
+  });
+  $("#btn-sync-sheet-now").addEventListener("click", () => {
+    markSheetSyncPending(loadAll());
+    syncSheetNow(true);
+  });
+  $("#import-mode").addEventListener("change", clearImportPreview);
   $("#import-file").addEventListener("change", event => {
     const file = event.target.files && event.target.files[0];
     if (file) importCsv(file);

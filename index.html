@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>受給者証・サービス更新期限管理システム</title>
-  <link rel="stylesheet" href="style.css?v=20260622-clean-core">
+  <link rel="stylesheet" href="style.css?v=20260708-sheet-sync">
 </head>
 <body>
   <header class="app-header">
@@ -61,6 +61,22 @@
           <p class="muted">入力済みの利用者を選び、個別の台帳を確認します。</p>
         </div>
         <button class="btn-primary" id="btn-new-from-personal">+ 新規入力</button>
+      </div>
+      <div class="list-toolbar">
+        <label>氏名検索
+          <input type="search" id="personal-search" placeholder="氏名・フリガナ・受給者証番号">
+        </label>
+        <label>表示状態
+          <select id="personal-status-filter">
+            <option value="normal">通常表示</option>
+            <option value="all">全員</option>
+            <option value="active">利用中のみ</option>
+            <option value="paused">停止のみ</option>
+            <option value="ended">終了のみ</option>
+            <option value="hidden">非表示のみ</option>
+            <option value="deleted">削除済みのみ</option>
+          </select>
+        </label>
       </div>
       <div id="personal-sheet-list" class="personal-sheet-list"></div>
     </section>
@@ -382,10 +398,25 @@
         <p>登録件数: <strong id="record-count">0</strong> 件</p>
         <p>保存容量: <strong id="storage-usage">0KB</strong></p>
         <p id="storage-warning" class="backup-warning" hidden></p>
+        <p id="backup-reminder" class="backup-warning" hidden></p>
         <p class="backup-note">この画面のデータはブラウザ内に保存されています。定期的にCSVエクスポートで控えを残してください。</p>
+        <p class="backup-note strong-note">同じURLを別PC・別ブラウザで開いても、同じ台帳は自動共有されません。運用前に必ずCSVバックアップを残してください。</p>
+        <div class="sheet-sync-box">
+          <h3>Googleスプレッドシート保存</h3>
+          <p class="backup-note">保存時に、指定のGoogle Apps Script経由でスプレッドシートへ送信します。初回はApps Script側の承認と公開設定が必要です。</p>
+          <label>Apps Script WebアプリURL
+            <input type="url" id="sheet-endpoint" placeholder="https://script.google.com/macros/s/.../exec">
+          </label>
+          <div class="actions">
+            <button class="btn-secondary" id="btn-save-sheet-endpoint">保存先URLを保存</button>
+            <button class="btn-primary" id="btn-sync-sheet-now">今すぐシートへ送信</button>
+          </div>
+          <p id="sheet-sync-status" class="sheet-sync-status">未設定</p>
+        </div>
         <div class="actions">
           <button class="btn-secondary" id="btn-save-dated-backup">日付付きバックアップ保存</button>
           <button class="btn-primary" id="btn-export">CSVエクスポート（Excel用）</button>
+          <button class="btn-secondary" id="btn-export-history">履歴CSV出力</button>
           <label>取込方法
             <select id="import-mode">
               <option value="merge">追加・差分更新</option>
@@ -394,6 +425,7 @@
           </label>
           <label class="btn-secondary file-label">CSVインポート<input type="file" id="import-file" accept=".csv,text/csv" hidden></label>
         </div>
+        <div id="import-preview" class="import-preview" hidden></div>
         <div class="backup-list-wrap">
           <h3>日付付きバックアップ</h3>
           <div id="dated-backup-list" class="dated-backup-list"></div>
@@ -422,6 +454,6 @@
     </div>
   </template>
 
-  <script src="app.js?v=20260625-long-term-ops-v2"></script>
+  <script src="app.js?v=20260708-sheet-sync"></script>
 </body>
 </html>

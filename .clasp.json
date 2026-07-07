@@ -1,0 +1,16 @@
+{
+  "scriptId": "1UXLr6Ezp0wEh7TWrayECIvOfSG9kbvbAbIuYej32gwaD3gYLVuOa37On",
+  "rootDir": "hukusikanri_sheet_backend",
+  "scriptExtensions": [
+    ".js",
+    ".gs"
+  ],
+  "htmlExtensions": [
+    ".html"
+  ],
+  "jsonExtensions": [
+    ".json"
+  ],
+  "filePushOrder": [],
+  "skipSubdirectories": false
+}
