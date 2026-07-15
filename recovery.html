@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>過去データ救出 | 受給者証・サービス更新期限管理システム</title>
+  <link rel="stylesheet" href="recovery.css?v=20260715">
+</head>
+<body>
+  <header class="site-header">
+    <div>
+      <p class="eyebrow">DATA RECOVERY</p>
+      <h1>受給者証・サービス更新期限管理システム</h1>
+      <p class="subtitle">過去データ救出</p>
+    </div>
+    <a class="header-link" href="index.html">通常画面へ戻る</a>
+  </header>
+
+  <main>
+    <section class="intro" aria-labelledby="recovery-title">
+      <div>
+        <p class="step-label">最初に確認</p>
+        <h2 id="recovery-title">以前入力したPCの、同じブラウザ・同じプロフィールで開いてください</h2>
+        <p>このページはブラウザ内に残る本システムの保存候補を読み取るだけです。検出したデータの変更、統合、削除、スプレッドシート送信は行いません。</p>
+      </div>
+      <div class="safety-note" role="note">
+        <strong>救出が終わるまで実施しないこと</strong>
+        <span>閲覧履歴・Cookie・サイトデータの削除、Chromeプロフィールの削除、ブラウザの初期化。</span>
+      </div>
+    </section>
+
+    <section class="environment" aria-labelledby="environment-title">
+      <div>
+        <span class="section-kicker">確認中の保存場所</span>
+        <h2 id="environment-title" data-origin>確認しています</h2>
+      </div>
+      <p id="origin-warning" class="origin-warning" hidden></p>
+    </section>
+
+    <section class="results" aria-labelledby="results-title">
+      <div class="section-heading">
+        <div>
+          <span class="section-kicker">検出結果</span>
+          <h2 id="results-title"><span id="candidate-count">0</span>個の保存候補</h2>
+          <p id="result-summary">ブラウザ内を確認しています。</p>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn secondary" id="btn-rescan">再確認</button>
+          <button type="button" class="btn primary" id="btn-export-all" disabled>全候補を一括保存</button>
+        </div>
+      </div>
+
+      <div class="table-wrap" id="candidate-table-wrap" hidden>
+        <table>
+          <thead>
+            <tr>
+              <th>保存候補</th>
+              <th>件数</th>
+              <th>更新日時の目安</th>
+              <th>氏名の確認</th>
+              <th>退避</th>
+            </tr>
+          </thead>
+          <tbody id="candidate-list"></tbody>
+        </table>
+      </div>
+
+      <div id="empty-state" class="empty-state" hidden>
+        <h3>このブラウザプロフィールでは候補を確認できませんでした</h3>
+        <p>以前入力したChromeプロフィールか、当時使っていたEdgeなど別のブラウザで、この救出ページを開き直してください。シークレットウィンドウでは過去データを参照できません。</p>
+      </div>
+    </section>
+
+    <section class="next-steps" aria-labelledby="next-title">
+      <span class="section-kicker">救出後</span>
+      <h2 id="next-title">保存したJSONは上書きせず、そのまま保管してください</h2>
+      <ol>
+        <li>まず「全候補を一括保存」を押します。</li>
+        <li>ダウンロードされたJSONファイルを別名変更せず保管します。</li>
+        <li>複数候補がある場合は、件数と氏名を照合してから復元データを決定します。</li>
+      </ol>
+      <p class="privacy">検出内容はこの端末内だけで処理され、このページから外部へ送信されません。</p>
+    </section>
+  </main>
+
+  <script src="recovery.js?v=20260715"></script>
+</body>
+</html>
