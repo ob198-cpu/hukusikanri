@@ -13,6 +13,10 @@ const SHEETS = {
     name: 'MonitoringRecords',
     headers: ['userId', 'name', 'month', 'recordDone', 'meetingDone', 'reportDone', 'mailed', 'returned', 'officeSent', 'billingDone', 'billingSent', 'noticeSent', 'json']
   },
+  renewalTasks: {
+    name: 'RenewalTasks',
+    headers: ['userId', 'name', 'task', 'done', 'completed', 'completedForDate', 'due', 'updatedAt']
+  },
   history: {
     name: 'History',
     headers: ['userId', 'name', 'at', 'action', 'detail']
@@ -45,6 +49,7 @@ function saveUsers_(users, sourceSavedAt) {
   writeRows_(SHEETS.users, users.map(userRow_));
   writeRows_(SHEETS.deadlines, users.flatMap(deadlineRows_));
   writeRows_(SHEETS.monitoring, users.flatMap(monitoringRows_));
+  writeRows_(SHEETS.renewalTasks, users.flatMap(renewalTaskRows_));
   writeRows_(SHEETS.history, users.flatMap(historyRows_).slice(-5000));
   writeRows_(SHEETS.state, [['lastSave', sourceSavedAt || '', new Date().toISOString()]]);
 }
@@ -68,7 +73,7 @@ function userRow_(user) {
 
 function deadlineRows_(user) {
   const rows = [];
-  rows.push([user.id || '', user.name || '', '計画相談', '計画相談', user.planStart || '', user.planEnd || '', '', '']);
+  rows.push([user.id || '', user.name || '', 'plan', 'plan-support', user.planStart || '', user.planEnd || '', '', '']);
   ['training1', 'training2', 'care1', 'care2'].forEach(function(group) {
     (user[group] || []).forEach(function(item) {
       rows.push([
@@ -84,6 +89,30 @@ function deadlineRows_(user) {
     });
   });
   return rows.filter(function(row) { return row[4] || row[5] || row[3]; });
+}
+
+function renewalTaskRows_(user) {
+  const checks = user.checks || {};
+  const labels = {
+    document: '書類作成',
+    send: '役所送付',
+    confirm: '本人受給者交付確認',
+    pdf: '受給者証の写し保存',
+    updateInfo: '個人シートの更新'
+  };
+  return Object.keys(labels).map(function(key) {
+    const task = checks[key] || {};
+    return [
+      user.id || '',
+      user.name || '',
+      labels[key],
+      bool_(task.done),
+      task.completed || '',
+      task.completedForDate || '',
+      task.due || user.planEnd || '',
+      user.updatedAt || ''
+    ];
+  });
 }
 
 function monitoringRows_(user) {
