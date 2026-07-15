@@ -13,6 +13,7 @@ const STORAGE_WARNING_BYTES = 4 * 1024 * 1024;
 const BACKUP_REMINDER_DAYS = 7;
 const SINGLE_SERVICE_TARGETS = ["training1", "training2"];
 let pendingImport = null;
+let cloudRefreshTimer = null;
 const RENEWAL_STEPS = [
   { key: "document", formKey: "document", label: "書類作成", short: "書類作成" },
   { key: "send", formKey: "send", label: "役所送付", short: "役所送付", legacyKey: "apply" },
@@ -180,12 +181,86 @@ async function syncSheetNow(showAlert = true) {
     localStorage.setItem(GOOGLE_SHEET_LAST_SYNC_KEY, new Date().toISOString());
     renderSheetSyncStatus("送信要求済み: Googleシート側で反映を確認してください。");
     if (showAlert) alert("Googleスプレッドシートへ送信要求を出しました。シート側で反映を確認してください。");
+    window.clearTimeout(cloudRefreshTimer);
+    cloudRefreshTimer = window.setTimeout(() => refreshFromCloud(), 1500);
     return true;
   } catch (error) {
     renderSheetSyncStatus(`送信失敗: ${error.message || error}`);
     if (showAlert) alert(`Googleスプレッドシートへの送信に失敗しました: ${error.message || error}`);
     return false;
   }
+}
+
+function requestCloudUsers() {
+  const endpoint = sheetEndpoint();
+  if (!endpoint) return Promise.resolve(null);
+  return new Promise(resolve => {
+    const callback = `__welfareCloudUsers_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const script = document.createElement("script");
+    const finish = payload => {
+      window.clearTimeout(timeout);
+      delete window[callback];
+      script.remove();
+      resolve(payload && payload.ok ? payload : null);
+    };
+    const timeout = window.setTimeout(() => finish(null), 10000);
+    window[callback] = finish;
+    script.onerror = () => finish(null);
+    script.src = `${endpoint}${endpoint.includes("?") ? "&" : "?"}action=getUsers&callback=${encodeURIComponent(callback)}&_=${Date.now()}`;
+    document.head.appendChild(script);
+  });
+}
+
+function changedAt(record) {
+  const value = record?.changedAt || record?.completed || "";
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function mergeNamedCloudRecords(localRecords = {}, cloudRecords = {}) {
+  const keys = new Set([...Object.keys(localRecords || {}), ...Object.keys(cloudRecords || {})]);
+  return Object.fromEntries([...keys].map(key => {
+    const local = localRecords?.[key];
+    const cloud = cloudRecords?.[key];
+    if (!local) return [key, cloud];
+    if (!cloud) return [key, local];
+    return [key, changedAt(local) >= changedAt(cloud) ? local : cloud];
+  }));
+}
+
+function mergeCloudUser(localUser, cloudUser) {
+  if (!localUser) return { ...cloudUser, _cloudUpdatedAt: cloudUser.updatedAt || "" };
+  if (!cloudUser) return localUser;
+  const localTime = Date.parse(localUser.updatedAt || 0) || 0;
+  const cloudTime = Date.parse(cloudUser.updatedAt || 0) || 0;
+  const newer = localTime > cloudTime ? localUser : cloudUser;
+  return normalizeUser({
+    ...newer,
+    checks: mergeNamedCloudRecords(localUser.checks, cloudUser.checks),
+    monitoringRecords: mergeNamedCloudRecords(localUser.monitoringRecords, cloudUser.monitoringRecords),
+    agencyNotices: mergeNamedCloudRecords(localUser.agencyNotices, cloudUser.agencyNotices),
+    deadlineCompletions: mergeNamedCloudRecords(localUser.deadlineCompletions, cloudUser.deadlineCompletions),
+    history: [...(localUser.history || []), ...(cloudUser.history || [])]
+      .filter((item, index, rows) => rows.findIndex(candidate => `${candidate.at}|${candidate.action}|${candidate.detail}` === `${item.at}|${item.action}|${item.detail}`) === index)
+      .slice(-HISTORY_LIMIT),
+    _cloudUpdatedAt: cloudUser.updatedAt || ""
+  });
+}
+
+async function refreshFromCloud() {
+  const payload = await requestCloudUsers();
+  if (!payload || !Array.isArray(payload.users)) return false;
+  const local = loadAll();
+  const cloudById = new Map(payload.users.filter(user => user?.id).map(user => [user.id, user]));
+  const localById = new Map(local.filter(user => user?.id).map(user => [user.id, user]));
+  const ids = new Set([...cloudById.keys(), ...localById.keys()]);
+  const merged = [...ids].map(id => mergeCloudUser(localById.get(id), cloudById.get(id)));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+  renderDashboard();
+  renderPersonalSheets();
+  renderMonitoringManagement();
+  renderSheetSyncStatus();
+  return true;
 }
 
 function renderSheetSyncStatus(message = "") {
@@ -296,6 +371,7 @@ function getUser(id) {
 }
 
 function upsertUser(user) {
+  user.updatedAt = new Date().toISOString();
   const users = loadAll();
   const index = users.findIndex(item => item.id === user.id);
   if (index >= 0) users[index] = user;
@@ -1317,14 +1393,16 @@ function updateMonitoringField(userId, monthKey, kind, field, checked) {
     user.agencyNotices[monthKey] = {
       ...defaultAgencyNotice(monthKey),
       ...(user.agencyNotices[monthKey] || {}),
-      [field]: checked
+      [field]: checked,
+      changedAt: new Date().toISOString()
     };
   } else {
     user.monitoringRecords = user.monitoringRecords || {};
     const nextRecord = {
       ...defaultMonitoringRecord(monthKey),
       ...(user.monitoringRecords[monthKey] || {}),
-      [field]: checked
+      [field]: checked,
+      changedAt: new Date().toISOString()
     };
     if (field === "meetingDone") nextRecord.addOn = checked;
     user.monitoringRecords[monthKey] = {
@@ -1890,6 +1968,7 @@ function updateTaskFromCheckbox(userId, key, done) {
   user.checks[key].done = done;
   user.checks[key].completed = done ? new Date().toISOString().slice(0, 10) : "";
   user.checks[key].completedForDate = done ? dueDate : "";
+  user.checks[key].changedAt = new Date().toISOString();
   addHistory(user, done ? "更新手続き完了" : "更新手続き取消", `${TASK_LABELS[key] || key} / ${formatDate(dueDate)}`);
   upsertUser(user);
   renderDashboard();
@@ -1906,6 +1985,7 @@ function toggleRenewalStep(userId, key) {
   user.checks[key].done = done;
   user.checks[key].completed = done ? new Date().toISOString().slice(0, 10) : "";
   user.checks[key].completedForDate = done ? dueDate : "";
+  user.checks[key].changedAt = new Date().toISOString();
   addHistory(user, done ? "更新手続き完了" : "更新手続き取消", `${TASK_LABELS[key] || key} / ${formatDate(dueDate)}`);
   upsertUser(user);
   renderDashboard();
@@ -2439,6 +2519,7 @@ function init() {
   const importedId = importUserFromUrlHash();
   renderDashboard();
   renderMonitoringManagement();
+  window.setTimeout(() => refreshFromCloud(), 700);
   if (importedId) showDetail(importedId);
 }
 

@@ -21,15 +21,24 @@ const SHEETS = {
     name: 'History',
     headers: ['userId', 'name', 'at', 'action', 'detail']
   },
+  conflicts: {
+    name: 'SyncConflicts',
+    headers: ['at', 'userId', 'name', 'area', 'serverUpdatedAt', 'incomingUpdatedAt', 'resolution']
+  },
   state: {
     name: 'State',
     headers: ['key', 'value', 'updatedAt']
   }
 };
 
-function doGet() {
+function doGet(e) {
   ensureAllSheets_();
-  return json_({ ok: true, status: 'ready', spreadsheetId: SPREADSHEET_ID });
+  const action = (e && e.parameter && e.parameter.action) || '';
+  const payload = action === 'getUsers'
+    ? { ok: true, users: readStoredUsers_(), spreadsheetId: SPREADSHEET_ID }
+    : { ok: true, status: 'ready', spreadsheetId: SPREADSHEET_ID };
+  const callback = e && e.parameter && e.parameter.callback;
+  return callback ? jsonp_(callback, payload) : json_(payload);
 }
 
 function doPost(e) {
@@ -38,8 +47,10 @@ function doPost(e) {
     const request = JSON.parse((e.postData && e.postData.contents) || '{}');
     if (request.action !== 'saveUsers') throw new Error('Unsupported action: ' + request.action);
     const users = Array.isArray(request.users) ? request.users : [];
-    saveUsers_(users, request.savedAt || new Date().toISOString());
-    return json_({ ok: true, saved: users.length, savedAt: new Date().toISOString() });
+    const merged = mergeUserSets_(readStoredUsers_(), users);
+    saveUsers_(merged.users, request.savedAt || new Date().toISOString());
+    if (merged.conflicts.length) appendRows_(SHEETS.conflicts, merged.conflicts);
+    return json_({ ok: true, saved: merged.users.length, conflicts: merged.conflicts.length, savedAt: new Date().toISOString() });
   } catch (error) {
     return json_({ ok: false, error: error.message || String(error) });
   }
@@ -52,6 +63,97 @@ function saveUsers_(users, sourceSavedAt) {
   writeRows_(SHEETS.renewalTasks, users.flatMap(renewalTaskRows_));
   writeRows_(SHEETS.history, users.flatMap(historyRows_).slice(-5000));
   writeRows_(SHEETS.state, [['lastSave', sourceSavedAt || '', new Date().toISOString()]]);
+}
+
+function readStoredUsers_() {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEETS.users.name);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, SHEETS.users.headers.length).getValues()
+    .map(function(row) {
+      try { return JSON.parse(row[11] || '{}'); } catch (error) { return {}; }
+    })
+    .filter(function(user) { return user && user.id; });
+}
+
+function mergeUserSets_(storedUsers, incomingUsers) {
+  const stored = {};
+  const incoming = {};
+  const conflicts = [];
+  storedUsers.forEach(function(user) { if (user && user.id) stored[user.id] = user; });
+  incomingUsers.forEach(function(user) { if (user && user.id) incoming[user.id] = user; });
+  const ids = {};
+  Object.keys(stored).forEach(function(id) { ids[id] = true; });
+  Object.keys(incoming).forEach(function(id) { ids[id] = true; });
+  const users = Object.keys(ids).map(function(id) {
+    if (!stored[id]) return incoming[id];
+    if (!incoming[id]) return stored[id];
+    return mergeUser_(stored[id], incoming[id], conflicts);
+  });
+  return { users: users, conflicts: conflicts };
+}
+
+function mergeUser_(serverUser, incomingUser, conflicts) {
+  const serverTime = timestamp_(serverUser.updatedAt);
+  const incomingTime = timestamp_(incomingUser.updatedAt);
+  const incomingIsNewer = incomingTime >= serverTime;
+  const winner = clone_(incomingIsNewer ? incomingUser : serverUser);
+  const older = incomingIsNewer ? serverUser : incomingUser;
+
+  winner.checks = mergeNamedRecords_(serverUser.checks, incomingUser.checks);
+  winner.monitoringRecords = mergeNamedRecords_(serverUser.monitoringRecords, incomingUser.monitoringRecords);
+  winner.agencyNotices = mergeNamedRecords_(serverUser.agencyNotices, incomingUser.agencyNotices);
+  winner.deadlineCompletions = mergeNamedRecords_(serverUser.deadlineCompletions, incomingUser.deadlineCompletions);
+  winner.history = mergeHistory_(serverUser.history, incomingUser.history);
+  winner.updatedAt = incomingIsNewer ? (incomingUser.updatedAt || serverUser.updatedAt || '') : (serverUser.updatedAt || incomingUser.updatedAt || '');
+
+  if (serverTime && incomingTime && serverTime !== incomingTime) {
+    conflicts.push([
+      new Date().toISOString(),
+      winner.id || '',
+      winner.name || '',
+      'basic-user-fields',
+      serverUser.updatedAt || '',
+      incomingUser.updatedAt || '',
+      incomingIsNewer ? 'incoming-newer-won; task and monitoring records merged' : 'server-newer-kept; task and monitoring records merged'
+    ]);
+  }
+  return winner;
+}
+
+function mergeNamedRecords_(serverRecords, incomingRecords) {
+  const server = serverRecords || {};
+  const incoming = incomingRecords || {};
+  const keys = {};
+  Object.keys(server).forEach(function(key) { keys[key] = true; });
+  Object.keys(incoming).forEach(function(key) { keys[key] = true; });
+  const result = {};
+  Object.keys(keys).forEach(function(key) {
+    const a = server[key];
+    const b = incoming[key];
+    if (!a) { result[key] = b; return; }
+    if (!b) { result[key] = a; return; }
+    result[key] = timestamp_(b.changedAt || b.completed) >= timestamp_(a.changedAt || a.completed) ? b : a;
+  });
+  return result;
+}
+
+function mergeHistory_(serverHistory, incomingHistory) {
+  const seen = {};
+  return (serverHistory || []).concat(incomingHistory || []).filter(function(item) {
+    const key = [item.at || '', item.action || '', item.detail || ''].join('|');
+    if (seen[key]) return false;
+    seen[key] = true;
+    return true;
+  }).sort(function(a, b) { return timestamp_(a.at) - timestamp_(b.at); }).slice(-10000);
+}
+
+function timestamp_(value) {
+  const time = new Date(value || 0).getTime();
+  return isNaN(time) ? 0 : time;
+}
+
+function clone_(value) {
+  return JSON.parse(JSON.stringify(value || {}));
 }
 
 function userRow_(user) {
@@ -171,10 +273,22 @@ function writeRows_(def, rows) {
   if (rows.length) sheet.getRange(2, 1, rows.length, def.headers.length).setValues(rows);
 }
 
+function appendRows_(def, rows) {
+  if (!rows.length) return;
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(def.name);
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, def.headers.length).setValues(rows);
+}
+
 function bool_(value) {
   return value === true;
 }
 
 function json_(payload) {
   return ContentService.createTextOutput(JSON.stringify(payload)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function jsonp_(callback, payload) {
+  if (!/^[A-Za-z_$][0-9A-Za-z_$\.]*$/.test(callback)) return json_({ ok: false, error: 'Invalid callback' });
+  return ContentService.createTextOutput(callback + '(' + JSON.stringify(payload) + ');')
+    .setMimeType(ContentService.MimeType.JAVASCRIPT);
 }
