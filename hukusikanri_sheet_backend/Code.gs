@@ -1,4 +1,6 @@
 const SPREADSHEET_ID = '1DNvKBKSmnKg7eU0T7T_46Qz5ib1phGFzG8yxdPQCUyw';
+const ACCESS_HASH_PROPERTY = 'WELFARE_ACCESS_PASSWORD_SHA256';
+const DEFAULT_ACCESS_HASH = '9af712cb3d7e9703631b41c37afc000805966fa4aca533ec3b231ccbf625a2bc';
 
 const SHEETS = {
   users: {
@@ -28,41 +30,124 @@ const SHEETS = {
   state: {
     name: 'State',
     headers: ['key', 'value', 'updatedAt']
+  },
+  syncAudit: {
+    name: 'SyncAudit',
+    headers: ['at', 'action', 'clientId', 'expectedRevision', 'previousRevision', 'newRevision', 'incomingUsers', 'storedUsers', 'conflicts', 'staleClient']
   }
 };
 
-function doGet(e) {
-  ensureAllSheets_();
-  const action = (e && e.parameter && e.parameter.action) || '';
-  const payload = action === 'getUsers'
-    ? { ok: true, users: readStoredUsers_(), spreadsheetId: SPREADSHEET_ID }
-    : { ok: true, status: 'ready', spreadsheetId: SPREADSHEET_ID };
-  const callback = e && e.parameter && e.parameter.callback;
-  return callback ? jsonp_(callback, payload) : json_(payload);
+function doGet() {
+  return json_({ ok: true, status: 'ready', requiresAuth: true });
 }
 
 function doPost(e) {
+  const lock = LockService.getScriptLock();
+  let locked = false;
   try {
-    ensureAllSheets_();
     const request = JSON.parse((e.postData && e.postData.contents) || '{}');
+    assertAuthenticated_(request.accessPassword || '');
+    if (request.action === 'authenticate') {
+      return json_({ ok: true, authenticated: true });
+    }
+
+    lock.waitLock(30000);
+    locked = true;
+    ensureAllSheets_();
+
+    if (request.action === 'getUsers') {
+      const state = readState_();
+      return json_({
+        ok: true,
+        users: readStoredUsers_(),
+        revision: state.revision || '',
+        saveStatus: state.status || 'ready',
+        spreadsheetId: SPREADSHEET_ID
+      });
+    }
+
     if (request.action !== 'saveUsers') throw new Error('Unsupported action: ' + request.action);
     const users = Array.isArray(request.users) ? request.users : [];
+    const state = readState_();
+    const previousRevision = state.revision || '';
+    const expectedRevision = String(request.expectedRevision || '');
+    const staleClient = Boolean(expectedRevision && previousRevision && expectedRevision !== previousRevision);
     const merged = mergeUserSets_(readStoredUsers_(), users);
-    saveUsers_(merged.users, request.savedAt || new Date().toISOString());
+    const newRevision = newRevision_();
+    saveUsers_(merged.users, request.savedAt || new Date().toISOString(), newRevision);
     if (merged.conflicts.length) appendRows_(SHEETS.conflicts, merged.conflicts);
-    return json_({ ok: true, saved: merged.users.length, conflicts: merged.conflicts.length, savedAt: new Date().toISOString() });
+    appendRows_(SHEETS.syncAudit, [[
+      new Date().toISOString(),
+      'saveUsers',
+      String(request.clientId || ''),
+      expectedRevision,
+      previousRevision,
+      newRevision,
+      users.length,
+      merged.users.length,
+      merged.conflicts.length,
+      staleClient
+    ]]);
+    return json_({
+      ok: true,
+      saved: merged.users.length,
+      conflicts: merged.conflicts.length,
+      staleClient: staleClient,
+      revision: newRevision,
+      users: merged.users,
+      savedAt: new Date().toISOString()
+    });
   } catch (error) {
     return json_({ ok: false, error: error.message || String(error) });
+  } finally {
+    if (locked) lock.releaseLock();
   }
 }
 
-function saveUsers_(users, sourceSavedAt) {
+function saveUsers_(users, sourceSavedAt, revision) {
+  const now = new Date().toISOString();
+  writeRows_(SHEETS.state, [['status', 'saving', now], ['revision', readState_().revision || '', now]]);
   writeRows_(SHEETS.users, users.map(userRow_));
   writeRows_(SHEETS.deadlines, users.flatMap(deadlineRows_));
   writeRows_(SHEETS.monitoring, users.flatMap(monitoringRows_));
   writeRows_(SHEETS.renewalTasks, users.flatMap(renewalTaskRows_));
   writeRows_(SHEETS.history, users.flatMap(historyRows_).slice(-5000));
-  writeRows_(SHEETS.state, [['lastSave', sourceSavedAt || '', new Date().toISOString()]]);
+  writeRows_(SHEETS.state, [
+    ['status', 'ready', now],
+    ['revision', revision || newRevision_(), now],
+    ['lastSave', sourceSavedAt || '', now],
+    ['lastServerSave', now, now]
+  ]);
+}
+
+function readState_() {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEETS.state.name);
+  if (!sheet || sheet.getLastRow() < 2) return {};
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
+  return values.reduce(function(state, row) {
+    if (row[0]) state[String(row[0])] = String(row[1] || '');
+    return state;
+  }, {});
+}
+
+function newRevision_() {
+  return new Date().toISOString() + '-' + Utilities.getUuid().slice(0, 8);
+}
+
+function assertAuthenticated_(password) {
+  const expected = PropertiesService.getScriptProperties().getProperty(ACCESS_HASH_PROPERTY) || DEFAULT_ACCESS_HASH;
+  if (!password || sha256_(password) !== expected) throw new Error('認証に失敗しました。');
+}
+
+function sha256_(value) {
+  return Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(value || ''),
+    Utilities.Charset.UTF_8
+  ).map(function(byte) {
+    const normalized = byte < 0 ? byte + 256 : byte;
+    return ('0' + normalized.toString(16)).slice(-2);
+  }).join('');
 }
 
 function readStoredUsers_() {

@@ -4,9 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>受給者証・サービス更新期限管理システム</title>
-  <link rel="stylesheet" href="style.css?v=20260708-sheet-sync">
+  <link rel="stylesheet" href="style.css?v=20260717-auth-sync-2">
 </head>
-<body>
+<body class="auth-locked">
+  <section id="auth-gate" class="auth-gate" aria-labelledby="auth-title">
+    <form id="auth-form" class="auth-panel">
+      <p class="eyebrow">Secure Access</p>
+      <h1 id="auth-title">受給者証・サービス更新期限管理システム</h1>
+      <p>閲覧・保存にはパスワードが必要です。</p>
+      <label for="auth-password">アクセスパスワード</label>
+      <input type="password" id="auth-password" autocomplete="current-password" required>
+      <button type="submit" class="btn-primary" id="auth-submit">ログイン</button>
+      <p id="auth-status" class="auth-status" aria-live="polite"></p>
+    </form>
+  </section>
   <header class="app-header">
     <div>
       <p class="eyebrow">Renewal Deadline Board</p>
@@ -17,6 +28,7 @@
       <button class="tab-btn" data-view="personal">個人シート</button>
       <button class="tab-btn" data-view="monitoring">モニタリング</button>
       <button class="tab-btn" data-view="backup">バックアップ</button>
+      <button class="tab-btn" type="button" id="btn-logout">ログアウト</button>
     </nav>
   </header>
 
@@ -404,11 +416,11 @@
         <div class="sheet-sync-box">
           <h3>Googleスプレッドシート保存</h3>
           <p class="backup-note">保存時に、指定のGoogle Apps Script経由でスプレッドシートへ送信します。初回はApps Script側の承認と公開設定が必要です。</p>
-          <label>Apps Script WebアプリURL
-            <input type="url" id="sheet-endpoint" placeholder="https://script.google.com/macros/s/.../exec">
+          <label>Apps Script WebアプリURL（管理者設定）
+            <input type="url" id="sheet-endpoint" readonly>
           </label>
           <div class="actions">
-            <button class="btn-secondary" id="btn-save-sheet-endpoint">保存先URLを保存</button>
+            <button class="btn-secondary" id="btn-save-sheet-endpoint" hidden>保存先URLを保存</button>
             <button class="btn-primary" id="btn-sync-sheet-now">今すぐシートへ送信</button>
           </div>
           <p id="sheet-sync-status" class="sheet-sync-status">未設定</p>
@@ -455,6 +467,6 @@
     </div>
   </template>
 
-  <script src="app.js?v=20260715-multi-pc-sync"></script>
+  <script src="app.js?v=20260717-auth-lock-history-2"></script>
 </body>
 </html>

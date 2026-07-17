@@ -4,6 +4,9 @@ const DATED_BACKUP_PREFIX = "welfare_users_backup_";
 const GOOGLE_SHEET_ENDPOINT_KEY = "welfare_google_sheet_endpoint_v1";
 const GOOGLE_SHEET_PENDING_KEY = "welfare_google_sheet_pending_v1";
 const GOOGLE_SHEET_LAST_SYNC_KEY = "welfare_google_sheet_last_sync_v1";
+const GOOGLE_SHEET_REVISION_KEY = "welfare_google_sheet_revision_v1";
+const GOOGLE_SHEET_CLIENT_ID_KEY = "welfare_google_sheet_client_id_v1";
+const ACCESS_PASSWORD_SESSION_KEY = "welfare_access_password_session_v1";
 const DEFAULT_GOOGLE_SHEET_ENDPOINT = "https://script.google.com/macros/s/AKfycbw4F3TJMF481WLZTN6RMgeRSSap0n-qT_2Pcn5TGoXmL46MtE4Suh_0Onz1LPgfSMjxTw/exec";
 const TARGET_SPREADSHEET_ID = "1DNvKBKSmnKg7eU0T7T_46Qz5ib1phGFzG8yxdPQCUyw";
 const WARN_DAYS = 60;
@@ -14,6 +17,8 @@ const BACKUP_REMINDER_DAYS = 7;
 const SINGLE_SERVICE_TARGETS = ["training1", "training2"];
 let pendingImport = null;
 let cloudRefreshTimer = null;
+let cloudSaveChain = Promise.resolve();
+let applicationStarted = false;
 const RENEWAL_STEPS = [
   { key: "document", formKey: "document", label: "書類作成", short: "書類作成" },
   { key: "send", formKey: "send", label: "役所送付", short: "役所送付", legacyKey: "apply" },
@@ -128,11 +133,14 @@ function saveAll(users) {
 }
 
 function sheetEndpoint() {
-  return localStorage.getItem(GOOGLE_SHEET_ENDPOINT_KEY) || DEFAULT_GOOGLE_SHEET_ENDPOINT;
+  return DEFAULT_GOOGLE_SHEET_ENDPOINT;
 }
 
 function setSheetEndpoint(url) {
-  localStorage.setItem(GOOGLE_SHEET_ENDPOINT_KEY, url.trim());
+  if (url.trim() !== DEFAULT_GOOGLE_SHEET_ENDPOINT) {
+    throw new Error("保存先は管理者設定で固定されています。");
+  }
+  localStorage.setItem(GOOGLE_SHEET_ENDPOINT_KEY, DEFAULT_GOOGLE_SHEET_ENDPOINT);
 }
 
 function markSheetSyncPending(users) {
@@ -158,7 +166,49 @@ function scheduleSheetSync() {
   scheduleSheetSync.timer = window.setTimeout(() => syncSheetNow(false), 600);
 }
 
-async function syncSheetNow(showAlert = true) {
+function cloudClientId() {
+  let clientId = localStorage.getItem(GOOGLE_SHEET_CLIENT_ID_KEY);
+  if (!clientId) {
+    clientId = `browser-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(GOOGLE_SHEET_CLIENT_ID_KEY, clientId);
+  }
+  return clientId;
+}
+
+function cloudRevision() {
+  return localStorage.getItem(GOOGLE_SHEET_REVISION_KEY) || "";
+}
+
+function setCloudRevision(revision) {
+  if (revision) localStorage.setItem(GOOGLE_SHEET_REVISION_KEY, String(revision));
+}
+
+async function cloudRequest(action, payload = {}, password = sessionStorage.getItem(ACCESS_PASSWORD_SESSION_KEY) || "") {
+  const endpoint = sheetEndpoint();
+  if (!endpoint) throw new Error("Apps Script WebアプリURLが未設定です。");
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({
+      action,
+      accessPassword: password,
+      clientId: cloudClientId(),
+      ...payload
+    })
+  });
+  if (!response.ok) throw new Error(`サーバー応答エラー (${response.status})`);
+  const result = await response.json();
+  if (!result?.ok) throw new Error(result?.error || "サーバー処理に失敗しました。");
+  return result;
+}
+
+function syncSheetNow(showAlert = true) {
+  const run = () => performSheetSync(showAlert);
+  cloudSaveChain = cloudSaveChain.then(run, run);
+  return cloudSaveChain;
+}
+
+async function performSheetSync(showAlert = true) {
   const endpoint = sheetEndpoint();
   if (!endpoint) {
     if (showAlert) alert("Apps Script WebアプリURLを設定してください。");
@@ -171,18 +221,29 @@ async function syncSheetNow(showAlert = true) {
     savedAt: new Date().toISOString()
   };
   try {
-    await fetch(endpoint, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ action: "saveUsers", ...payload })
+    const result = await cloudRequest("saveUsers", {
+      ...payload,
+      expectedRevision: cloudRevision()
     });
-    localStorage.removeItem(GOOGLE_SHEET_PENDING_KEY);
-    localStorage.setItem(GOOGLE_SHEET_LAST_SYNC_KEY, new Date().toISOString());
-    renderSheetSyncStatus("送信要求済み: Googleシート側で反映を確認してください。");
-    if (showAlert) alert("Googleスプレッドシートへ送信要求を出しました。シート側で反映を確認してください。");
-    window.clearTimeout(cloudRefreshTimer);
-    cloudRefreshTimer = window.setTimeout(() => refreshFromCloud(), 1500);
+    setCloudRevision(result.revision);
+    if (Array.isArray(result.users)) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(result.users.map(user => normalizeUser({ ...user }))));
+      renderDashboard();
+      renderPersonalSheets();
+      renderMonitoringManagement();
+    }
+    const currentPending = pendingSheetSync();
+    if (!currentPending || currentPending.savedAt === payload.savedAt) {
+      localStorage.removeItem(GOOGLE_SHEET_PENDING_KEY);
+    }
+    const confirmedAt = result.savedAt || new Date().toISOString();
+    localStorage.setItem(GOOGLE_SHEET_LAST_SYNC_KEY, confirmedAt);
+    const message = result.staleClient
+      ? `サーバー保存済み: ${formatDateTime(confirmedAt)} / 他PCの更新と統合しました`
+      : `サーバー保存済み: ${formatDateTime(confirmedAt)}`;
+    renderSheetSyncStatus(message, true);
+    if (showAlert) alert(result.staleClient ? "他のPCの更新と統合し、サーバー保存を確認しました。" : "サーバーへの保存完了を確認しました。");
+    if (pendingSheetSync()) scheduleSheetSync();
     return true;
   } catch (error) {
     renderSheetSyncStatus(`送信失敗: ${error.message || error}`);
@@ -191,24 +252,15 @@ async function syncSheetNow(showAlert = true) {
   }
 }
 
-function requestCloudUsers() {
-  const endpoint = sheetEndpoint();
-  if (!endpoint) return Promise.resolve(null);
-  return new Promise(resolve => {
-    const callback = `__welfareCloudUsers_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const script = document.createElement("script");
-    const finish = payload => {
-      window.clearTimeout(timeout);
-      delete window[callback];
-      script.remove();
-      resolve(payload && payload.ok ? payload : null);
-    };
-    const timeout = window.setTimeout(() => finish(null), 10000);
-    window[callback] = finish;
-    script.onerror = () => finish(null);
-    script.src = `${endpoint}${endpoint.includes("?") ? "&" : "?"}action=getUsers&callback=${encodeURIComponent(callback)}&_=${Date.now()}`;
-    document.head.appendChild(script);
-  });
+async function requestCloudUsers() {
+  try {
+    const result = await cloudRequest("getUsers");
+    setCloudRevision(result.revision);
+    return result;
+  } catch (error) {
+    renderSheetSyncStatus(`読込失敗: ${error.message || error}`);
+    return null;
+  }
 }
 
 function changedAt(record) {
@@ -256,6 +308,11 @@ async function refreshFromCloud() {
   const ids = new Set([...cloudById.keys(), ...localById.keys()]);
   const merged = [...ids].map(id => mergeCloudUser(localById.get(id), cloudById.get(id)));
   localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+  const cloudSnapshot = JSON.stringify(payload.users.map(user => normalizeUser({ ...user })));
+  if (JSON.stringify(merged) !== cloudSnapshot) {
+    markSheetSyncPending(merged);
+    scheduleSheetSync();
+  }
   renderDashboard();
   renderPersonalSheets();
   renderMonitoringManagement();
@@ -263,7 +320,7 @@ async function refreshFromCloud() {
   return true;
 }
 
-function renderSheetSyncStatus(message = "") {
+function renderSheetSyncStatus(message = "", isSuccess = false) {
   const endpointInput = $("#sheet-endpoint");
   if (endpointInput) endpointInput.value = sheetEndpoint();
   const status = $("#sheet-sync-status");
@@ -272,7 +329,7 @@ function renderSheetSyncStatus(message = "") {
   const last = localStorage.getItem(GOOGLE_SHEET_LAST_SYNC_KEY);
   if (message) {
     status.textContent = message;
-    status.className = "sheet-sync-status warn";
+    status.className = `sheet-sync-status ${isSuccess ? "ok" : "warn"}`;
   } else if (!sheetEndpoint()) {
     status.textContent = "未設定: Apps Script WebアプリURLを設定すると、保存時にシートへ送信します。";
     status.className = "sheet-sync-status warn";
@@ -280,7 +337,7 @@ function renderSheetSyncStatus(message = "") {
     status.textContent = `未送信データあり: ${formatDateTime(pending.savedAt)} 保存分`;
     status.className = "sheet-sync-status warn";
   } else if (last) {
-    status.textContent = `送信要求済み: ${formatDateTime(last)} / Googleシート側で反映確認`;
+    status.textContent = `サーバー保存済み: ${formatDateTime(last)}`;
     status.className = "sheet-sync-status ok";
   } else {
     status.textContent = "設定済み: 次回保存時にシートへ送信します。";
@@ -2380,7 +2437,9 @@ function parseCsv(text) {
   return rows;
 }
 
-function init() {
+function startApplication() {
+  if (applicationStarted) return;
+  applicationStarted = true;
   setupJapaneseDateInputs();
   setupWardSelect();
   $$(".tab-btn").forEach(button => button.addEventListener("click", () => {
@@ -2502,13 +2561,21 @@ function init() {
   $("#btn-export").addEventListener("click", exportCsv);
   $("#btn-export-history").addEventListener("click", exportHistoryCsv);
   $("#btn-save-sheet-endpoint").addEventListener("click", () => {
-    setSheetEndpoint($("#sheet-endpoint").value);
-    renderSheetSyncStatus();
-    alert("Googleスプレッドシート保存先URLを保存しました。");
+    try {
+      setSheetEndpoint($("#sheet-endpoint").value);
+      renderSheetSyncStatus();
+      alert("保存先は管理者設定で固定されています。");
+    } catch (error) {
+      alert(error.message || error);
+    }
   });
   $("#btn-sync-sheet-now").addEventListener("click", () => {
     markSheetSyncPending(loadAll());
     syncSheetNow(true);
+  });
+  $("#btn-logout").addEventListener("click", () => {
+    sessionStorage.removeItem(ACCESS_PASSWORD_SESSION_KEY);
+    location.reload();
   });
   $("#import-mode").addEventListener("change", clearImportPreview);
   $("#import-file").addEventListener("change", event => {
@@ -2521,6 +2588,45 @@ function init() {
   renderMonitoringManagement();
   window.setTimeout(() => refreshFromCloud(), 700);
   if (importedId) showDetail(importedId);
+}
+
+async function attemptLogin(password) {
+  const status = $("#auth-status");
+  const button = $("#auth-submit");
+  button.disabled = true;
+  status.textContent = "認証中です...";
+  status.className = "auth-status";
+  try {
+    await cloudRequest("authenticate", {}, password);
+    sessionStorage.setItem(ACCESS_PASSWORD_SESSION_KEY, password);
+    status.textContent = "";
+    document.body.classList.remove("auth-locked");
+    $("#auth-gate").hidden = true;
+    startApplication();
+    return true;
+  } catch (error) {
+    sessionStorage.removeItem(ACCESS_PASSWORD_SESSION_KEY);
+    status.textContent = error.message || "認証に失敗しました。";
+    status.className = "auth-status error";
+    $("#auth-password").focus();
+    return false;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function init() {
+  $("#auth-form").addEventListener("submit", event => {
+    event.preventDefault();
+    attemptLogin($("#auth-password").value);
+  });
+  const savedPassword = sessionStorage.getItem(ACCESS_PASSWORD_SESSION_KEY);
+  if (savedPassword) {
+    $("#auth-password").value = savedPassword;
+    attemptLogin(savedPassword);
+  } else {
+    $("#auth-password").focus();
+  }
 }
 
 document.addEventListener("DOMContentLoaded", init);
