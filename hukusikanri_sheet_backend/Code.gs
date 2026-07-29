@@ -1,6 +1,4 @@
 const SPREADSHEET_ID = '1DNvKBKSmnKg7eU0T7T_46Qz5ib1phGFzG8yxdPQCUyw';
-const ACCESS_HASH_PROPERTY = 'WELFARE_ACCESS_PASSWORD_SHA256';
-const DEFAULT_ACCESS_HASH = '9af712cb3d7e9703631b41c37afc000805966fa4aca533ec3b231ccbf625a2bc';
 
 const SHEETS = {
   users: {
@@ -38,7 +36,7 @@ const SHEETS = {
 };
 
 function doGet() {
-  return json_({ ok: true, status: 'ready', requiresAuth: true });
+  return json_({ ok: true, status: 'ready', requiresAuth: false });
 }
 
 function doPost(e) {
@@ -46,7 +44,6 @@ function doPost(e) {
   let locked = false;
   try {
     const request = JSON.parse((e.postData && e.postData.contents) || '{}');
-    assertAuthenticated_(request.accessPassword || '');
     if (request.action === 'authenticate') {
       return json_({ ok: true, authenticated: true });
     }
@@ -132,22 +129,6 @@ function readState_() {
 
 function newRevision_() {
   return new Date().toISOString() + '-' + Utilities.getUuid().slice(0, 8);
-}
-
-function assertAuthenticated_(password) {
-  const expected = PropertiesService.getScriptProperties().getProperty(ACCESS_HASH_PROPERTY) || DEFAULT_ACCESS_HASH;
-  if (!password || sha256_(password) !== expected) throw new Error('認証に失敗しました。');
-}
-
-function sha256_(value) {
-  return Utilities.computeDigest(
-    Utilities.DigestAlgorithm.SHA_256,
-    String(value || ''),
-    Utilities.Charset.UTF_8
-  ).map(function(byte) {
-    const normalized = byte < 0 ? byte + 256 : byte;
-    return ('0' + normalized.toString(16)).slice(-2);
-  }).join('');
 }
 
 function readStoredUsers_() {

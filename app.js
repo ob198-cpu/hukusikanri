@@ -6,7 +6,6 @@ const GOOGLE_SHEET_PENDING_KEY = "welfare_google_sheet_pending_v1";
 const GOOGLE_SHEET_LAST_SYNC_KEY = "welfare_google_sheet_last_sync_v1";
 const GOOGLE_SHEET_REVISION_KEY = "welfare_google_sheet_revision_v1";
 const GOOGLE_SHEET_CLIENT_ID_KEY = "welfare_google_sheet_client_id_v1";
-const ACCESS_PASSWORD_SESSION_KEY = "welfare_access_password_session_v1";
 const DEFAULT_GOOGLE_SHEET_ENDPOINT = "https://script.google.com/macros/s/AKfycbw4F3TJMF481WLZTN6RMgeRSSap0n-qT_2Pcn5TGoXmL46MtE4Suh_0Onz1LPgfSMjxTw/exec";
 const TARGET_SPREADSHEET_ID = "1DNvKBKSmnKg7eU0T7T_46Qz5ib1phGFzG8yxdPQCUyw";
 const WARN_DAYS = 60;
@@ -183,7 +182,7 @@ function setCloudRevision(revision) {
   if (revision) localStorage.setItem(GOOGLE_SHEET_REVISION_KEY, String(revision));
 }
 
-async function cloudRequest(action, payload = {}, password = sessionStorage.getItem(ACCESS_PASSWORD_SESSION_KEY) || "") {
+async function cloudRequest(action, payload = {}) {
   const endpoint = sheetEndpoint();
   if (!endpoint) throw new Error("Apps Script WebアプリURLが未設定です。");
   const response = await fetch(endpoint, {
@@ -191,7 +190,6 @@ async function cloudRequest(action, payload = {}, password = sessionStorage.getI
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify({
       action,
-      accessPassword: password,
       clientId: cloudClientId(),
       ...payload
     })
@@ -2573,10 +2571,6 @@ function startApplication() {
     markSheetSyncPending(loadAll());
     syncSheetNow(true);
   });
-  $("#btn-logout").addEventListener("click", () => {
-    sessionStorage.removeItem(ACCESS_PASSWORD_SESSION_KEY);
-    location.reload();
-  });
   $("#import-mode").addEventListener("change", clearImportPreview);
   $("#import-file").addEventListener("change", event => {
     const file = event.target.files && event.target.files[0];
@@ -2590,43 +2584,8 @@ function startApplication() {
   if (importedId) showDetail(importedId);
 }
 
-async function attemptLogin(password) {
-  const status = $("#auth-status");
-  const button = $("#auth-submit");
-  button.disabled = true;
-  status.textContent = "認証中です...";
-  status.className = "auth-status";
-  try {
-    await cloudRequest("authenticate", {}, password);
-    sessionStorage.setItem(ACCESS_PASSWORD_SESSION_KEY, password);
-    status.textContent = "";
-    document.body.classList.remove("auth-locked");
-    $("#auth-gate").hidden = true;
-    startApplication();
-    return true;
-  } catch (error) {
-    sessionStorage.removeItem(ACCESS_PASSWORD_SESSION_KEY);
-    status.textContent = error.message || "認証に失敗しました。";
-    status.className = "auth-status error";
-    $("#auth-password").focus();
-    return false;
-  } finally {
-    button.disabled = false;
-  }
-}
-
 function init() {
-  $("#auth-form").addEventListener("submit", event => {
-    event.preventDefault();
-    attemptLogin($("#auth-password").value);
-  });
-  const savedPassword = sessionStorage.getItem(ACCESS_PASSWORD_SESSION_KEY);
-  if (savedPassword) {
-    $("#auth-password").value = savedPassword;
-    attemptLogin(savedPassword);
-  } else {
-    $("#auth-password").focus();
-  }
+  startApplication();
 }
 
 document.addEventListener("DOMContentLoaded", init);

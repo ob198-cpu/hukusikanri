@@ -4,20 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>受給者証・サービス更新期限管理システム</title>
-  <link rel="stylesheet" href="style.css?v=20260717-auth-sync-2">
+  <link rel="stylesheet" href="style.css?v=20260729-no-auth-1">
 </head>
-<body class="auth-locked">
-  <section id="auth-gate" class="auth-gate" aria-labelledby="auth-title">
-    <form id="auth-form" class="auth-panel">
-      <p class="eyebrow">Secure Access</p>
-      <h1 id="auth-title">受給者証・サービス更新期限管理システム</h1>
-      <p>閲覧・保存にはパスワードが必要です。</p>
-      <label for="auth-password">アクセスパスワード</label>
-      <input type="password" id="auth-password" autocomplete="current-password" required>
-      <button type="submit" class="btn-primary" id="auth-submit">ログイン</button>
-      <p id="auth-status" class="auth-status" aria-live="polite"></p>
-    </form>
-  </section>
+<body>
   <header class="app-header">
     <div>
       <p class="eyebrow">Renewal Deadline Board</p>
@@ -28,7 +17,6 @@
       <button class="tab-btn" data-view="personal">個人シート</button>
       <button class="tab-btn" data-view="monitoring">モニタリング</button>
       <button class="tab-btn" data-view="backup">バックアップ</button>
-      <button class="tab-btn" type="button" id="btn-logout">ログアウト</button>
     </nav>
   </header>
 
@@ -467,6 +455,6 @@
     </div>
   </template>
 
-  <script src="app.js?v=20260717-auth-lock-history-2"></script>
+  <script src="app.js?v=20260729-no-auth-1"></script>
 </body>
 </html>
